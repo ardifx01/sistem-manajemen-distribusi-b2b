@@ -121,7 +121,31 @@ class OrderController extends Controller
                 $orderItemsData = [];
 
                 foreach ($items as $item) {
+                    \Log::info('Processing order item', [
+                        'product_id' => $item['product_id'],
+                        'incoming_item_id' => $item['incoming_item_id'],
+                        'quantity' => $item['quantity']
+                    ]);
+                    
+                    // Validasi konsistensi product_id dan incoming_item_id
+                    if ($item['product_id'] != $item['incoming_item_id']) {
+                        $productItem = IncomingItem::find($item['product_id']);
+                        $incomingItem = IncomingItem::find($item['incoming_item_id']);
+                        
+                        $productName = $productItem ? $productItem->nama_barang : 'Not found';
+                        $incomingName = $incomingItem ? $incomingItem->nama_barang : 'Not found';
+                        
+                        throw new \Exception("Ketidakcocokan ID produk: product_id ({$item['product_id']}: {$productName}) berbeda dengan incoming_item_id ({$item['incoming_item_id']}: {$incomingName}). Kedua ID harus sama untuk menghindari kebingungan produk.");
+                    }
+                    
                     $incomingItem = IncomingItem::findOrFail($item['incoming_item_id']);
+                    
+                    \Log::info('Found incoming item', [
+                        'id' => $incomingItem->id,
+                        'nama_barang' => $incomingItem->nama_barang,
+                        'kategori_barang' => $incomingItem->kategori_barang,
+                        'jumlah_barang' => $incomingItem->jumlah_barang
+                    ]);
                     
                     // Check stock availability
                     if ($incomingItem->jumlah_barang < $item['quantity']) {
@@ -143,15 +167,20 @@ class OrderController extends Controller
                         'unit_price' => $unitPrice,
                         'total_price' => $totalPrice,
                         'notes' => $item['notes'] ?? null,
-                        'incoming_item' => $incomingItem
+                        // Store complete incoming item data for later use
+                        'incoming_item_data' => [
+                            'id' => $incomingItem->id,
+                            'nama_barang' => $incomingItem->nama_barang,
+                            'kategori_barang' => $incomingItem->kategori_barang,
+                            'category_id' => $incomingItem->category_id,
+                            'producer_id' => $incomingItem->producer_id,
+                            'lokasi_rak_barang' => $incomingItem->lokasi_rak_barang,
+                        ]
                     ];
                 }
 
                 // Calculate shipping cost (simplified - could be more complex)
                 $shippingCost = $this->calculateShippingCost($request->shipping_method);
-                
-                // Calculate tax (simplified - 10%)
-                $taxAmount = $subtotal * 0.10;
                 
                 // Handle voucher
                 $voucherDiscount = 0;
@@ -168,7 +197,7 @@ class OrderController extends Controller
                 }
 
                 $discountAmount = $voucherDiscount;
-                $totalAmount = $subtotal + $shippingCost + $taxAmount - $discountAmount;
+                $totalAmount = $subtotal + $shippingCost - $discountAmount;
 
                 // Generate order number
                 $orderNumber = Order::generateOrderNumber();
@@ -189,7 +218,6 @@ class OrderController extends Controller
                     'location_accuracy' => $request->location_accuracy,
                     'subtotal' => $subtotal,
                     'shipping_cost' => $shippingCost,
-                    'tax_amount' => $taxAmount,
                     'discount_amount' => $discountAmount,
                     'total_amount' => $totalAmount,
                     'shipping_method' => $request->shipping_method,
@@ -201,24 +229,34 @@ class OrderController extends Controller
 
                 // Create order items and update stock
                 foreach ($orderItemsData as $itemData) {
-                    $incomingItem = $itemData['incoming_item'];
-                    unset($itemData['incoming_item']);
+                    $incomingItemData = $itemData['incoming_item_data'];
+                    unset($itemData['incoming_item_data']);
                     
                     $itemData['order_id'] = $order->id;
                     $orderItem = OrderItem::create($itemData);
 
                     // Create outgoing item record for stock tracking
+                    \Log::info('Creating OutgoingItem for order', [
+                        'order_id' => $order->id,
+                        'order_item_id' => $orderItem->id,
+                        'incoming_item_id' => $incomingItemData['id'],
+                        'incoming_item_name' => $incomingItemData['nama_barang'],
+                        'incoming_item_category' => $incomingItemData['kategori_barang'],
+                        'requested_quantity' => $itemData['quantity'],
+                        'order_item_data' => $itemData
+                    ]);
+                    
                     OutgoingItem::create([
                         'order_id' => $order->id,
                         'order_item_id' => $orderItem->id,
-                        'incoming_item_id' => $incomingItem->id,
-                        'nama_barang' => $incomingItem->nama_barang,
-                        'kategori_barang' => $incomingItem->kategori_barang,
-                        'category_id' => $incomingItem->category_id,
-                        'producer_id' => $incomingItem->producer_id,
+                        'incoming_item_id' => $incomingItemData['id'],
+                        'nama_barang' => $incomingItemData['nama_barang'],
+                        'kategori_barang' => $incomingItemData['kategori_barang'],
+                        'category_id' => $incomingItemData['category_id'],
+                        'producer_id' => $incomingItemData['producer_id'],
                         'tanggal_keluar_barang' => Carbon::now()->toDateString(),
                         'jumlah_barang' => $itemData['quantity'],
-                        'lokasi_rak_barang' => $incomingItem->lokasi_rak_barang,
+                        'lokasi_rak_barang' => $incomingItemData['lokasi_rak_barang'],
                         'tujuan_distribusi' => $request->pengecer_name,
                         'metode_bayar' => $request->payment_method,
                         'pembayaran_transaksi' => $totalAmount,
@@ -231,8 +269,9 @@ class OrderController extends Controller
                         'transaction_type' => 'retail',
                     ]);
 
-                    // Update incoming item stock
-                    $incomingItem->decrement('jumlah_barang', $itemData['quantity']);
+                    // Update incoming item stock - refetch to avoid stale data
+                    $currentIncomingItem = IncomingItem::findOrFail($incomingItemData['id']);
+                    $currentIncomingItem->decrement('jumlah_barang', $itemData['quantity']);
                 }
 
                 // Increment voucher usage if used
@@ -315,12 +354,12 @@ class OrderController extends Controller
     public function adminIndex(Request $request)
     {
         try {
-            // Check if user is admin (you can modify this logic based on your role system)
+            // Check if user is admin or sales
             $user = $request->user();
-            if ($user->role !== 'Admin') {
+            if (!in_array($user->role, ['Admin', 'sales'])) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Unauthorized. Admin access required.'
+                    'message' => 'Unauthorized. Admin or Sales access required.'
                 ], 403);
             }
 
@@ -479,4 +518,320 @@ class OrderController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Display orders for sales (ready to ship and shipping orders with location)
+     */
+    public function salesIndex(Request $request)
+    {
+        try {
+            // Check if user is sales or admin
+            $user = $request->user();
+            if (!in_array($user->role, ['Admin', 'sales'])) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized. Sales access required.'
+                ], 403);
+            }
+
+            $perPage = $request->get('per_page', 15);
+            
+            // Query untuk SEMUA orders - hapus filter status default
+            $query = Order::with([
+                'orderItems',
+                'user'
+            ])->orderBy('created_at', 'desc');
+
+            // Filter berdasarkan status jika disediakan
+            if ($request->has('status') && $request->status !== '') {
+                $query->where('order_status', $request->status);
+            }
+
+            // Filter berdasarkan kota
+            if ($request->has('city') && $request->city !== '') {
+                $query->where('city', 'LIKE', "%{$request->city}%");
+            }
+
+            // Filter berdasarkan tanggal
+            if ($request->has('date_from')) {
+                $query->whereDate('created_at', '>=', $request->date_from);
+            }
+
+            if ($request->has('date_to')) {
+                $query->whereDate('created_at', '<=', $request->date_to);
+            }
+
+            // Search berdasarkan order number atau nama pengecer
+            if ($request->has('search') && $request->search !== '') {
+                $search = $request->search;
+                $query->where(function ($q) use ($search) {
+                    $q->where('order_number', 'LIKE', "%{$search}%")
+                      ->orWhere('pengecer_name', 'LIKE', "%{$search}%")
+                      ->orWhere('shipping_address', 'LIKE', "%{$search}%");
+                });
+            }
+
+            $orders = $query->paginate($perPage);
+
+            // Add distance calculation from warehouse
+            // Default warehouse location: Pekanbaru, Riau
+            $defaultWarehouseLat = 0.5084228544488281;
+            $defaultWarehouseLng = 101.40900501631607;
+            
+            $warehouseLat = $request->get('warehouse_lat', $defaultWarehouseLat);
+            $warehouseLng = $request->get('warehouse_lng', $defaultWarehouseLng);
+            
+            foreach ($orders->items() as $order) {
+                if ($order->latitude && $order->longitude) {
+                    $order->distance_km = $this->calculateDistance(
+                        $warehouseLat, $warehouseLng, 
+                        $order->latitude, $order->longitude
+                    );
+                } else {
+                    $order->distance_km = null;
+                }
+                
+                // Add warehouse info to each order
+                $order->warehouse_info = [
+                    'latitude' => $warehouseLat,
+                    'longitude' => $warehouseLng,
+                    'address' => 'Jl. Suntai, Labuh Baru Bar., Kec. Payung Sekaki, Kota Pekanbaru, Riau 28292'
+                ];
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $orders,
+                'warehouse' => [
+                    'latitude' => $warehouseLat,
+                    'longitude' => $warehouseLng,
+                    'address' => 'Jl. Suntai, Labuh Baru Bar., Kec. Payung Sekaki, Kota Pekanbaru, Riau 28292',
+                    'city' => 'Pekanbaru',
+                    'province' => 'Riau'
+                ],
+                'debug' => [
+                    'total_orders_in_db' => Order::count(),
+                    'final_count' => $orders->total(),
+                    'query_info' => 'Showing ALL orders with distance calculation from Pekanbaru warehouse'
+                ],
+                'summary' => [
+                    'total_all_orders' => Order::count(),
+                    'pending' => Order::where('order_status', 'pending')->count(),
+                    'confirmed' => Order::where('order_status', 'confirmed')->count(),
+                    'processing' => Order::where('order_status', 'processing')->count(),
+                    'shipped' => Order::where('order_status', 'shipped')->count(),
+                    'delivered' => Order::whereIn('order_status', ['delivered', 'completed'])->count(),
+                    'cancelled' => Order::where('order_status', 'cancelled')->count(),
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Gagal mengambil data pesanan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Update order shipping status
+     */
+    public function updateShippingStatus(Request $request, $id)
+    {
+        try {
+            // Check if user is sales or admin
+            $user = $request->user();
+            if (!in_array($user->role, ['Admin', 'sales'])) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized. Sales access required.'
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'order_status' => 'required|in:confirmed,processing,shipped,delivered,cancelled',
+                'delivery_notes' => 'nullable|string|max:500',
+                'delivered_at' => 'nullable|date',
+                'delivery_photo' => 'nullable|image|mimes:jpeg,png,jpg|max:2048'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Validasi gagal',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $order = Order::findOrFail($id);
+
+            // Update order status
+            $order->order_status = $request->order_status;
+            
+            if ($request->delivery_notes) {
+                $order->notes = ($order->notes ? $order->notes . '\n' : '') . 
+                               '[' . now()->format('Y-m-d H:i:s') . '] ' . $request->delivery_notes;
+            }
+
+            if ($request->delivered_at && $request->order_status === 'delivered') {
+                $order->delivered_at = $request->delivered_at;
+            }
+
+            // Handle delivery photo upload
+            if ($request->hasFile('delivery_photo')) {
+                $photo = $request->file('delivery_photo');
+                $photoName = 'delivery_' . $order->id . '_' . time() . '.' . $photo->getClientOriginalExtension();
+                $photoPath = $photo->storeAs('delivery_photos', $photoName, 'public');
+                $order->delivery_photo = $photoPath;
+            }
+
+            $order->save();
+
+            // Load fresh data with relationships
+            $order->load(['orderItems', 'user:id,full_name,email,phone_number']);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Status pengantaran berhasil diupdate',
+                'data' => $order
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Gagal update status pengantaran: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mark order as finished packing (Barang Sudah Selesai dikemas)
+     * For Admin role in Pengelolaan Barang menu
+     */
+    public function markAsFinishedPacking(Request $request, $id)
+    {
+        try {
+            // Check if user is admin
+            $user = $request->user();
+            if ($user->role !== 'Admin') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized. Admin access required.'
+                ], 403);
+            }
+
+            $order = Order::findOrFail($id);
+
+            // Validate current order status - allow from pending, confirmed, and processing status
+            if (!in_array($order->order_status, ['pending', 'confirmed', 'processing'])) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Order tidak dapat ditandai selesai dikemas. Status saat ini: ' . $order->order_status . '. Hanya order dengan status pending, confirmed, atau processing yang dapat diproses.'
+                ], 422);
+            }
+
+            // Update order status based on current status
+            $previousStatus = $order->order_status;
+            if ($order->order_status === 'pending') {
+                // From pending: confirm first then set to processing
+                $order->order_status = 'processing';
+                $statusAction = 'dari pending langsung ke processing (dikonfirmasi dan selesai dikemas)';
+            } elseif ($order->order_status === 'confirmed') {
+                // From confirmed: set to processing
+                $order->order_status = 'processing';
+                $statusAction = 'dari confirmed ke processing (selesai dikemas)';
+            } else {
+                // Status already processing, just add note
+                $statusAction = 'tetap processing (konfirmasi selesai dikemas)';
+            }
+            
+            // Add notes about packing completion
+            $packingNote = '[' . now()->format('Y-m-d H:i:s') . '] Barang sudah selesai dikemas oleh Admin - Status ' . $statusAction;
+            $order->notes = ($order->notes ? $order->notes . '\n' : '') . $packingNote;
+
+            $order->save();
+
+            // Load fresh data with relationships
+            $order->load(['orderItems', 'user:id,full_name,email,phone_number']);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Order berhasil ditandai sebagai selesai dikemas - Status ' . $statusAction,
+                'data' => [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'previous_status' => $previousStatus,
+                    'current_status' => $order->order_status,
+                    'status_action' => $statusAction,
+                    'updated_at' => $order->updated_at,
+                    'notes' => $order->notes
+                ]
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Order tidak ditemukan'
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Gagal menandai order selesai dikemas: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Calculate distance between two coordinates using Haversine formula
+     */
+    private function calculateDistance($lat1, $lon1, $lat2, $lon2)
+    {
+        $earthRadius = 6371; // Earth's radius in kilometers
+
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLon = deg2rad($lon2 - $lon1);
+
+        $a = sin($dLat/2) * sin($dLat/2) + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon/2) * sin($dLon/2);
+        $c = 2 * atan2(sqrt($a), sqrt(1-$a));
+
+        return round($earthRadius * $c, 2);
+    }
+
+    /**
+     * Simple test endpoint to check order data
+     */
+    public function testOrders(Request $request)
+    {
+        try {
+            // Get simple order data
+            $orders = Order::select([
+                'id', 'order_number', 'pengecer_name', 'pengecer_phone', 
+                'shipping_address', 'city', 'latitude', 'longitude',
+                'order_status', 'payment_status', 'total_amount', 'created_at'
+            ])->orderBy('created_at', 'desc')->limit(10)->get();
+
+            $totalCount = Order::count();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Test endpoint - order data retrieved',
+                'data' => [
+                    'total_orders' => $totalCount,
+                    'sample_orders' => $orders,
+                    'first_order_example' => $orders->first()
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Test failed: ' . $e->getMessage(),
+                'debug' => [
+                    'error_line' => $e->getLine(),
+                    'error_file' => $e->getFile()
+                ]
+            ], 500);
+        }
+    }
 }
+

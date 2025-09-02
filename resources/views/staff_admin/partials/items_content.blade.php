@@ -396,7 +396,7 @@
                         <thead class="table-light">
                             <tr>
                                 <th>No.</th>
-                                <th>Foto Barang</th>
+                                <!-- <th>Foto Barang</th> -->
                                 <th>Nama Barang</th>
                                 <th>Kategori</th>
                                 <th>Jumlah</th>
@@ -416,13 +416,6 @@
                                         data-date="{{ $item->tanggal_keluar_barang->format('Y-m-d') }}"
                                         data-destination="{{ $item->tujuan_distribusi }}">
                                         <td>{{ $loop->iteration }}</td>
-                                        <td>
-                                            @if($item->foto_barang)
-                                                <img src="{{ asset('storage/' . $item->foto_barang) }}" alt="Foto Barang" style="width: 50px; height: 50px; object-fit: cover; border-radius: 5px;">
-                                            @else
-                                                <img src="https://placehold.co/50x50/e0e0e0/ffffff?text=No+Image" alt="No Image" style="width: 50px; height: 50px; object-fit: cover; border-radius: 5px;">
-                                            @endif
-                                        </td>
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 <div class="item-icon me-2">
@@ -483,10 +476,6 @@
                                                         title="Edit Item Keluar">
                                                     <i class="fas fa-edit"></i>
                                                 </button>
-                                                <button class="btn btn-sm btn-primary" onclick="window.printDeliveryNote({{ $item->id }})" 
-                                                        title="Cetak Surat Jalan">
-                                                    <i class="fas fa-print"></i>
-                                                </button>
                                                 <button class="btn btn-sm btn-danger" onclick="window.deleteOutgoingItem({{ $item->id }})" 
                                                         title="Hapus Item Keluar">
                                                     <i class="fas fa-trash"></i>
@@ -497,7 +486,7 @@
                                 @endforeach
                             @else
                                 <tr>
-                                    <td colspan="11" class="text-center py-4"> {{-- Updated colspan --}}
+                                    <td colspan="10" class="text-center py-4"> {{-- Updated colspan --}}
                                         <i class="fas fa-truck fa-3x text-muted mb-3"></i>
                                         <p class="text-muted">Tidak ada data barang keluar.</p>
                                     </td>
@@ -690,6 +679,172 @@
     </div>
 </div>
 
+{{-- Modal untuk Ajukan Pergantian Barang --}}
+<div class="modal fade" id="ajukanPergantianModal" tabindex="-1" aria-labelledby="ajukanPergantianModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="ajukanPergantianModalLabel">
+                    <i class="fas fa-exchange-alt"></i> Ajukan Pergantian Barang
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="pergantianBarangForm" enctype="multipart/form-data">
+                    @csrf
+                    
+                    <!-- Section untuk memilih barang -->
+                    <div class="mb-4">
+                        <div class="card border-info">
+                            <div class="card-header bg-info text-white">
+                                <h6 class="mb-0"><i class="fas fa-search"></i> Pilih Barang dari Inventory</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="pergantian_search_barang" class="form-label">Cari Barang</label>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control" id="pergantian_search_barang" 
+                                               placeholder="Ketik nama barang untuk mencari..." 
+                                               onkeypress="if(event.key==='Enter') searchIncomingItems()">
+                                        <button type="button" class="btn btn-outline-secondary" onclick="searchIncomingItems()">
+                                            <i class="fas fa-search"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="pergantian_select_barang" class="form-label">Pilih Barang</label>
+                                    <select class="form-control" id="pergantian_select_barang" onchange="fillFormFromSelectedItem()">
+                                        <option value="">-- Pilih barang dari daftar --</option>
+                                    </select>
+                                    <small class="form-text text-muted">
+                                        Pilih barang yang akan diganti dari daftar inventory yang tersedia
+                                    </small>
+                                </div>
+                                
+                                <div class="text-center">
+                                    <button type="button" class="btn btn-sm btn-outline-warning" onclick="clearSelectedItem()">
+                                        <i class="fas fa-eraser"></i> Clear & Isi Manual
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Form fields (akan di-autofill) -->
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="pergantian_nama_barang" class="form-label">Nama Barang <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="pergantian_nama_barang" name="nama_barang" required>
+                                <input type="hidden" id="pergantian_incoming_item_id" name="incoming_item_id">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="pergantian_kategori_barang" class="form-label">Kategori Barang <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="pergantian_kategori_barang" name="kategori_barang" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="pergantian_jumlah_barang" class="form-label">Jumlah Barang <span class="text-danger">*</span></label>
+                                <input type="number" class="form-control" id="pergantian_jumlah_barang" name="jumlah_barang" min="1" required>
+                                <small class="form-text text-muted">
+                                    <span id="pergantian_stok_info" class="text-info"></span>
+                                </small>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="pergantian_nama_produsen" class="form-label">Nama Produsen</label>
+                                <input type="text" class="form-control" id="pergantian_nama_produsen" name="nama_produsen">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="pergantian_lokasi_rak" class="form-label">Lokasi Rak</label>
+                                <input type="text" class="form-control" id="pergantian_lokasi_rak" name="lokasi_rak_barang" readonly>
+                                <small class="form-text text-muted">Lokasi rak barang yang dipilih</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="pergantian_alasan" class="form-label">Alasan Pergantian <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="pergantian_alasan" name="alasan_pengembalian" rows="3" required 
+                                  placeholder="Jelaskan alasan mengapa barang perlu diganti..."></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="pergantian_foto_bukti" class="form-label">Foto Bukti</label>
+                        <input type="file" class="form-control" id="pergantian_foto_bukti" name="foto_bukti" 
+                               accept="image/jpeg,image/jpg,image/png" onchange="previewFotoBukti(this)">
+                        <small class="form-text text-muted">
+                            Upload foto yang menunjukkan kondisi barang (format: JPEG, JPG, PNG, max 2MB)
+                        </small>
+                        <div id="pergantian_foto_preview" class="mt-3" style="display: none;">
+                            <div class="card" style="max-width: 300px;">
+                                <img id="pergantian_foto_img" src="" class="card-img-top" alt="Preview">
+                                <div class="card-body">
+                                    <small class="text-muted">Preview foto bukti</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Catatan:</strong> Pengajuan pergantian barang akan diproses oleh admin. 
+                        Pastikan informasi yang dimasukkan akurat dan lengkap.
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="button" class="btn btn-primary" onclick="submitPergantianBarang()">
+                    <i class="fas fa-paper-plane"></i> Ajukan Pergantian
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{-- Rack Selector Modal --}}
+<div class="modal fade" id="rackSelectorModal" tabindex="-1" aria-labelledby="rackSelectorModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="rackSelectorModalLabel">
+                    <i class="fas fa-map"></i> Pilih Lokasi Rak
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Petunjuk:</strong> Klik pada kotak rak untuk memilih lokasi. 
+                        Format lokasi: R[1-8]-[1-4]-[1-6] (Rak-Tingkat-Posisi)
+                    </div>
+                </div>
+                <div id="warehouseGrid" class="warehouse-selector-grid">
+                    <!-- Grid akan diisi oleh JavaScript -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="button" id="confirmRackBtn" class="btn btn-primary" onclick="window.confirmRackSelection()" disabled>
+                    <i class="fas fa-check"></i> Pilih Lokasi
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 
 <style>
 /* Additional CSS for enhanced functionality */
@@ -838,6 +993,10 @@
 // Functions that will be called from HTML (onclick) must be in the global scope
 // or accessed via window.functionName. For simplicity, we will make them global.
 
+// Define asset storage URL to avoid blade syntax in JavaScript
+const STORAGE_URL = '{{ asset("storage") }}';
+const APP_URL = '{{ url("/") }}';
+
 /**
  * Initializes page functionality after the DOM is loaded.
  */
@@ -869,15 +1028,15 @@ window.setupFilters = function() {
         const rows = document.querySelectorAll('#incomingTable tbody tr');
 
         rows.forEach(row => {
-            if (row.cells.length < 2) return; // Skip empty rows
+            if (row.cells.length < 4) return; // Skip empty rows or incomplete rows
             
-            const nameCell = row.cells[3]; // Nama Barang column (index 3 after No. and Foto Barang)
+            const nameCell = row.cells[3]; // Nama Barang column (index 3: Checkbox, No, Foto, Nama)
             const category = row.dataset.category || '';
             const date = row.dataset.date || '';
 
             if (nameCell) {
-                const nameText = nameCell.textContent.toLowerCase();
-                const matchesSearch = nameText.includes(searchText);
+                const nameText = nameCell.textContent.toLowerCase().trim();
+                const matchesSearch = !searchText || nameText.includes(searchText);
                 const matchesCategory = !selectedCategory || category === selectedCategory;
                 const matchesDate = !selectedDate || date === selectedDate;
 
@@ -911,7 +1070,7 @@ window.setupFilters = function() {
         rows.forEach(row => {
             if (row.cells.length < 2) return; // Skip empty rows
             
-            const nameCell = row.cells[2]; // Nama Barang column (index 2 after No. and Foto Barang)
+            const nameCell = row.cells[1]; // Nama Barang column (index 1 after No.)
             const category = row.dataset.category || '';
             const destination = row.dataset.destination || '';
             const date = row.dataset.date || '';
@@ -1031,17 +1190,17 @@ window.viewItemDetails = async function(itemId, itemType = 'incoming') {
         let htmlContent = '';
 
         const fotoBarangHtml = item.foto_barang
-            ? `<img src="{{ asset('storage') }}/${item.foto_barang}" alt="Foto Barang" class="img-fluid rounded mb-3" style="max-width: 200px; height: auto;">`
+            ? `<img src="${STORAGE_URL}/${item.foto_barang}" alt="Foto Barang" class="img-fluid rounded mb-3" style="max-width: 200px; height: auto;">`
             : `<img src="https://placehold.co/200x200/e0e0e0/ffffff?text=No+Image" alt="No Image" class="img-fluid rounded mb-3">`;
 
         const pembayaranTransaksiHtml = item.pembayaran_transaksi
-            ? `<a href="{{ asset('storage') }}/${item.pembayaran_transaksi}" target="_blank" class="btn btn-sm btn-outline-primary mt-2" title="Lihat Bukti Pembayaran">` +
+            ? `<a href="${STORAGE_URL}/${item.pembayaran_transaksi}" target="_blank" class="btn btn-sm btn-outline-primary mt-2" title="Lihat Bukti Pembayaran">` +
               (window.isPdf(item.pembayaran_transaksi) ? `<i class="fas fa-file-pdf"></i> PDF` : `<i class="fas fa-image"></i> Gambar`) +
               `</a>`
             : `-`;
 
         const notaTransaksiHtml = item.nota_transaksi
-            ? `<a href="{{ asset('storage') }}/${item.nota_transaksi}" target="_blank" class="btn btn-sm btn-outline-secondary mt-2" title="Lihat Nota Transaksi">` +
+            ? `<a href="${STORAGE_URL}/${item.nota_transaksi}" target="_blank" class="btn btn-sm btn-outline-secondary mt-2" title="Lihat Nota Transaksi">` +
               (window.isPdf(item.nota_transaksi) ? `<i class="fas fa-file-pdf"></i> PDF` : `<i class="fas fa-image"></i> Gambar`) +
               `</a>`
             : `-`;
@@ -1109,10 +1268,7 @@ window.viewItemDetails = async function(itemId, itemType = 'incoming') {
         } else { // itemType === 'outgoing'
             htmlContent = `
                 <div class="row">
-                    <div class="col-md-4 text-center">
-                        ${fotoBarangHtml}
-                    </div>
-                    <div class="col-md-8">
+                    <div class="col-md-12">
                         <div class="card">
                             <div class="card-header bg-danger text-white">
                                 <h6 class="mb-0"><i class="fas fa-shipping-fast"></i> Detail Pengiriman</h6>
@@ -1130,46 +1286,6 @@ window.viewItemDetails = async function(itemId, itemType = 'incoming') {
                                     <tr><td><strong>Pembayaran Transaksi:</strong></td><td>${pembayaranTransaksiHtml}</td></tr>
                                     <tr><td><strong>Nota Transaksi:</strong></td><td>${notaTransaksiHtml}</td></tr>
                                 </table>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-12 mt-3">
-                        <div class="card">
-                            <div class="card-header bg-primary text-white">
-                                <h6 class="mb-0"><i class="fas fa-tools"></i> Aksi & Timeline</h6>
-                            </div>
-                            <div class="card-body">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="d-grid gap-2">
-                                            <button class="btn btn-primary btn-sm" onclick="window.printDeliveryNote(${item.id})">
-                                                <i class="fas fa-print"></i> Cetak Surat Jalan
-                                            </button>
-                                            <button class="btn btn-success btn-sm" onclick="window.trackDelivery(${item.id})">
-                                                <i class="fas fa-truck"></i> Lacak Pengiriman
-                                            </button>
-                                            <button class="btn btn-info btn-sm" onclick="window.updateDeliveryStatus(${item.id})">
-                                                <i class="fas fa-edit"></i> Update Status
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <small class="text-muted">
-                                            <div class="mb-2">
-                                                <i class="fas fa-plus text-success"></i>
-                                                Dibuat ${new Date(item.created_at || item.tanggal_keluar_barang).toLocaleDateString('id-ID')}
-                                            </div>
-                                            <div class="mb-2">
-                                                <i class="fas fa-shipping-fast text-primary"></i>
-                                                Dikirim ${new Date(item.tanggal_keluar_barang).toLocaleDateString('id-ID')}
-                                            </div>
-                                            <div class="mb-2">
-                                                <i class="fas fa-check text-success"></i>
-                                                Status: <span class="badge bg-success">Selesai</span>
-                                            </div>
-                                        </small>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -1205,6 +1321,16 @@ window.editIncomingItem = async function(itemId) {
             window.showAlert('error', `Gagal memuat data barang untuk diedit. Status: ${response.status}. Detail di konsol.`);
             return;
         }
+        
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const errorText = await response.text();
+            console.error('Server response is not JSON:', errorText);
+            window.showAlert('error', 'Server tidak mengembalikan data JSON yang valid. Periksa konsol untuk detail.');
+            return;
+        }
+        
         const result = await response.json();
 
         if (result.success) {
@@ -1232,6 +1358,16 @@ window.editOutgoingItem = async function(itemId) {
             window.showAlert('error', `Gagal memuat data barang keluar untuk diedit. Status: ${response.status}. Detail di konsol.`);
             return;
         }
+        
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const errorText = await response.text();
+            console.error('Server response is not JSON:', errorText);
+            window.showAlert('error', 'Server tidak mengembalikan data JSON yang valid. Periksa konsol untuk detail.');
+            return;
+        }
+        
         const result = await response.json();
 
         if (result.success) {
@@ -1316,7 +1452,12 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                 </div>
                 <div class="mb-3">
                     <label for="crud_lokasi_rak" class="form-label">Lokasi Rak</label>
-                    <input type="text" class="form-control" id="crud_lokasi_rak" name="lokasi_rak_barang" placeholder="Format: R1-1-1">
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="crud_lokasi_rak" name="lokasi_rak_barang" placeholder="Format: R1-1-1">
+                        <button type="button" class="btn btn-outline-secondary" onclick="window.showRackSelector('crud_lokasi_rak')">
+                            <i class="fas fa-map"></i> Pilih
+                        </button>
+                    </div>
                     <small class="text-muted">Format: R[1-8]-[1-4]-[1-6], contoh: R1-1-1</small>
                 </div>
                 <div class="mb-3">
@@ -1325,7 +1466,6 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                         <option value="">Pilih Metode Pembayaran</option>
                         <option value="Cash">Cash</option>
                         <option value="Transfer Bank">Transfer Bank</option>
-                        <option value="Kredit">Kredit</option>
                     </select>
                 </div>
                 <div class="mb-3">
@@ -1339,9 +1479,46 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <small class="form-text text-muted">Format yang diizinkan: JPG, PNG, GIF, SVG, PDF. Maksimal 2MB.</small>
                 </div>
                 <div class="mb-3">
-                    <label for="crud_foto_barang" class="form-label">Foto Barang</label>
-                    <input type="file" class="form-control" id="crud_foto_barang" name="foto_barang" accept="image/*">
-                    <small class="form-text text-muted">Format yang diizinkan: JPG, PNG, GIF, SVG. Maksimal 2MB.</small>
+                    <label for="foto_option" class="form-label">Opsi Foto Barang</label>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="foto_option" id="foto_existing" value="existing" onchange="toggleFotoOptions()">
+                            <label class="form-check-label" for="foto_existing">
+                                Pilih dari foto yang sudah ada
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="foto_option" id="foto_upload" value="upload" onchange="toggleFotoOptions()">
+                            <label class="form-check-label" for="foto_upload">
+                                Upload foto baru
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Existing photo selection -->
+                    <div id="existing_foto_section" class="mb-3" style="display: none;">
+                        <label for="crud_foto_barang_existing" class="form-label">Pilih Foto yang Sudah Ada</label>
+                        <select class="form-select" id="crud_foto_barang_existing" name="foto_barang_existing">
+                            <option value="">Pilih foto...</option>
+                            @if(isset($incomingItems))
+                                @foreach($incomingItems->whereNotNull('foto_barang')->unique('foto_barang') as $item)
+                                    <option value="{{ $item->foto_barang }}" data-preview="{{ asset('storage/' . $item->foto_barang) }}">
+                                        {{ $item->nama_barang }} - {{ basename($item->foto_barang) }}
+                                    </option>
+                                @endforeach
+                            @endif
+                        </select>
+                        <div id="existing_foto_preview" class="mt-2" style="display: none;">
+                            <img id="existing_foto_img" src="" alt="Preview" style="width: 100px; height: auto; border-radius: 5px;">
+                        </div>
+                    </div>
+                    
+                    <!-- New photo upload -->
+                    <div id="upload_foto_section" class="mb-3" style="display: none;">
+                        <label for="crud_foto_barang" class="form-label">Upload Foto Barang Baru</label>
+                        <input type="file" class="form-control" id="crud_foto_barang" name="foto_barang" accept="image/*">
+                        <small class="form-text text-muted">Format yang diizinkan: JPG, PNG, GIF, SVG. Maksimal 2MB.</small>
+                    </div>
                 </div>
             `;
         } else { // outgoing - add mode (e.g., from "Pindah ke Barang Keluar" or "Proses Barang Keluar")
@@ -1420,7 +1597,6 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                         <option value="">Pilih Metode</option>
                         <option value="Cash">Cash</option>
                         <option value="Transfer Bank">Transfer Bank</option>
-                        <option value="Kartu Kredit">Kartu Kredit</option>
                         <option value="Debit">Debit</option>
                     </select>
                 </div>
@@ -1429,7 +1605,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_pembayaran_transaksi_outgoing" name="pembayaran_transaksi" accept="image/*,application/pdf">
                     <small class="form-text text-muted">Unggah gambar atau PDF bukti pembayaran (opsional).</small>
                     <div id="current_pembayaran_transaksi_outgoing" class="mt-2">
-                        ${defaultPembayaran ? (window.isPdf(defaultPembayaran) ? `<a href="{{ asset('storage') }}/${defaultPembayaran}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="{{ asset('storage') }}/${defaultPembayaran}" alt="Current Payment" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
+                        ${defaultPembayaran ? (window.isPdf(defaultPembayaran) ? `<a href="${STORAGE_URL}/${defaultPembayaran}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="${STORAGE_URL}/${defaultPembayaran}" alt="Current Payment" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
                     </div>
                 </div>
                 <div class="mb-3">
@@ -1437,7 +1613,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_nota_transaksi_outgoing" name="nota_transaksi" accept="image/*,application/pdf">
                     <small class="form-text text-muted">Unggah gambar atau PDF nota transaksi (opsional).</small>
                     <div id="current_nota_transaksi_outgoing" class="mt-2">
-                        ${defaultNota ? (window.isPdf(defaultNota) ? `<a href="{{ asset('storage') }}/${defaultNota}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="{{ asset('storage') }}/${defaultNota}" alt="Current Nota" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
+                        ${defaultNota ? (window.isPdf(defaultNota) ? `<a href="${STORAGE_URL}/${defaultNota}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="${STORAGE_URL}/${defaultNota}" alt="Current Nota" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
                     </div>
                 </div>
                 <div class="mb-3">
@@ -1445,7 +1621,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_foto_barang_outgoing" name="foto_barang" accept="image/*">
                     <small class="form-text text-muted">Unggah gambar barang (opsional).</small>
                     <div id="current_foto_barang_outgoing" class="mt-2">
-                        ${defaultFoto ? `<img src="{{ asset('storage') }}/${defaultFoto}" alt="Current Photo" style="width: 100px; height: auto; border-radius: 5px;">` : ''}
+                        ${defaultFoto ? `<img src="${STORAGE_URL}/${defaultFoto}" alt="Current Photo" style="width: 100px; height: auto; border-radius: 5px;">` : ''}
                     </div>
                 </div>
             `;
@@ -1512,7 +1688,6 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                         <option value="">Pilih Metode Pembayaran</option>
                         <option value="Cash" ${itemData.metode_bayar === 'Cash' ? 'selected' : ''}>Cash</option>
                         <option value="Transfer Bank" ${itemData.metode_bayar === 'Transfer Bank' ? 'selected' : ''}>Transfer Bank</option>
-                        <option value="Kredit" ${itemData.metode_bayar === 'Kredit' ? 'selected' : ''}>Kredit</option>
                     </select>
                 </div>
                 <div class="mb-3">
@@ -1520,7 +1695,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_pembayaran_transaksi" name="pembayaran_transaksi" accept="image/*,application/pdf">
                     <small class="form-text text-muted">Unggah gambar atau PDF bukti pembayaran (biarkan kosong untuk tidak mengubah).</small>
                     <div id="current_pembayaran_transaksi" class="mt-2">
-                        ${itemData.pembayaran_transaksi ? (window.isPdf(itemData.pembayaran_transaksi) ? `<a href="{{ asset('storage') }}/${itemData.pembayaran_transaksi}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="{{ asset('storage') }}/${itemData.pembayaran_transaksi}" alt="Current Payment" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
+                        ${itemData.pembayaran_transaksi ? (window.isPdf(itemData.pembayaran_transaksi) ? `<a href="${STORAGE_URL}/${itemData.pembayaran_transaksi}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="${STORAGE_URL}/${itemData.pembayaran_transaksi}" alt="Current Payment" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
                     </div>
                     <div class="form-check mt-1">
                         <input class="form-check-input" type="checkbox" id="remove_pembayaran_transaksi" name="pembayaran_transaksi_removed" value="true">
@@ -1532,7 +1707,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_nota_transaksi" name="nota_transaksi" accept="image/*,application/pdf">
                     <small class="form-text text-muted">Unggah gambar atau PDF nota transaksi (biarkan kosong untuk tidak mengubah).</small>
                     <div id="current_nota_transaksi" class="mt-2">
-                        ${itemData.nota_transaksi ? (window.isPdf(itemData.nota_transaksi) ? `<a href="{{ asset('storage') }}/${itemData.nota_transaksi}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="{{ asset('storage') }}/${itemData.nota_transaksi}" alt="Current Nota" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
+                        ${itemData.nota_transaksi ? (window.isPdf(itemData.nota_transaksi) ? `<a href="${STORAGE_URL}/${itemData.nota_transaksi}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="${STORAGE_URL}/${itemData.nota_transaksi}" alt="Current Nota" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
                     </div>
                     <div class="form-check mt-1">
                         <input class="form-check-input" type="checkbox" id="remove_nota_transaksi" name="nota_transaksi_removed" value="true">
@@ -1544,7 +1719,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_foto_barang" name="foto_barang" accept="image/*">
                     <small class="form-text text-muted">Unggah gambar barang (biarkan kosong untuk tidak mengubah).</small>
                     <div id="current_foto_barang" class="mt-2">
-                        ${itemData.foto_barang ? `<img src="{{ asset('storage') }}/${itemData.foto_barang}" alt="Current Photo" style="width: 100px; height: auto; border-radius: 5px;">` : ''}
+                        ${itemData.foto_barang ? `<img src="${STORAGE_URL}/${itemData.foto_barang}" alt="Current Photo" style="width: 100px; height: auto; border-radius: 5px;">` : ''}
                     </div>
                     <div class="form-check mt-1">
                         <input class="form-check-input" type="checkbox" id="remove_foto_barang" name="foto_barang_removed" value="true">
@@ -1596,8 +1771,6 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                         <option value="">Pilih Metode</option>
                         <option value="Cash" ${itemData.metode_bayar === 'Cash' ? 'selected' : ''}>Cash</option>
                         <option value="Transfer Bank" ${itemData.metode_bayar === 'Transfer Bank' ? 'selected' : ''}>Transfer Bank</option>
-                        <option value="Kartu Kredit" ${itemData.metode_bayar === 'Kartu Kredit' ? 'selected' : ''}>Kartu Kredit</option>
-                        <option value="Debit" ${itemData.metode_bayar === 'Debit' ? 'selected' : ''}>Debit</option>
                     </select>
                 </div>
                 <div class="mb-3">
@@ -1605,7 +1778,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_pembayaran_transaksi_outgoing" name="pembayaran_transaksi" accept="image/*,application/pdf">
                     <small class="form-text text-muted">Unggah gambar atau PDF bukti pembayaran (biarkan kosong untuk tidak mengubah).</small>
                     <div id="current_pembayaran_transaksi_outgoing" class="mt-2">
-                        ${itemData.pembayaran_transaksi ? (window.isPdf(itemData.pembayaran_transaksi) ? `<a href="{{ asset('storage') }}/${itemData.pembayaran_transaksi}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="{{ asset('storage') }}/${itemData.pembayaran_transaksi}" alt="Current Payment" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
+                        ${itemData.pembayaran_transaksi ? (window.isPdf(itemData.pembayaran_transaksi) ? `<a href="${STORAGE_URL}/${itemData.pembayaran_transaksi}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="${STORAGE_URL}/${itemData.pembayaran_transaksi}" alt="Current Payment" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
                     </div>
                     <div class="form-check mt-1">
                         <input class="form-check-input" type="checkbox" id="remove_pembayaran_transaksi_outgoing" name="pembayaran_transaksi_removed" value="true">
@@ -1617,7 +1790,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_nota_transaksi_outgoing" name="nota_transaksi" accept="image/*,application/pdf">
                     <small class="form-text text-muted">Unggah gambar atau PDF nota transaksi (biarkan kosong untuk tidak mengubah).</small>
                     <div id="current_nota_transaksi_outgoing" class="mt-2">
-                        ${itemData.nota_transaksi ? (window.isPdf(itemData.nota_transaksi) ? `<a href="{{ asset('storage') }}/${itemData.nota_transaksi}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="{{ asset('storage') }}/${itemData.nota_transaksi}" alt="Current Nota" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
+                        ${itemData.nota_transaksi ? (window.isPdf(itemData.nota_transaksi) ? `<a href="${STORAGE_URL}/${itemData.nota_transaksi}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` : `<img src="${STORAGE_URL}/${itemData.nota_transaksi}" alt="Current Nota" style="width: 100px; height: auto; border-radius: 5px;">`) : ''}
                     </div>
                     <div class="form-check mt-1">
                         <input class="form-check-input" type="checkbox" id="remove_nota_transaksi_outgoing" name="nota_transaksi_removed" value="true">
@@ -1629,7 +1802,7 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
                     <input type="file" class="form-control" id="crud_foto_barang_outgoing" name="foto_barang" accept="image/*">
                     <small class="form-text text-muted">Unggah gambar barang (biarkan kosong untuk tidak mengubah).</small>
                     <div id="current_foto_barang_outgoing" class="mt-2">
-                        ${itemData.foto_barang ? `<img src="{{ asset('storage') }}/${itemData.foto_barang}" alt="Current Photo" style="width: 100px; height: auto; border-radius: 5px;">` : ''}
+                        ${itemData.foto_barang ? `<img src="${STORAGE_URL}/${itemData.foto_barang}" alt="Current Photo" style="width: 100px; height: auto; border-radius: 5px;">` : ''}
                     </div>
                     <div class="form-check mt-1">
                         <input class="form-check-input" type="checkbox" id="remove_foto_barang_outgoing" name="foto_barang_removed" value="true">
@@ -1641,8 +1814,55 @@ window.renderItemCrudForm = function(itemType, mode, itemData = null) {
     }
 
     formContentDiv.innerHTML = formHtml;
-    const itemCrudModal = new bootstrap.Modal(document.getElementById('itemCrudModal'));
+    
+    // Create modal with proper error handling
+    const itemCrudModalElement = document.getElementById('itemCrudModal');
+    if (!itemCrudModalElement) {
+        console.error('itemCrudModal element not found');
+        window.showAlert('error', 'Modal element tidak ditemukan. Silakan refresh halaman.');
+        return;
+    }
+    
+    const itemCrudModal = new bootstrap.Modal(itemCrudModalElement, {
+        backdrop: 'static',
+        keyboard: false
+    });
     itemCrudModal.show();
+
+    // Add capacity event listeners for incoming items
+    if (itemType === 'incoming') {
+        // Use setTimeout to ensure DOM elements are fully rendered
+        setTimeout(() => {
+            // Clear any existing capacity info first
+            const existingCapacityInfo = document.querySelector('.capacity-info');
+            if (existingCapacityInfo) {
+                existingCapacityInfo.remove();
+            }
+            
+            // Clear cache to ensure fresh data
+            if (window.capacityCache) {
+                window.capacityCache.clear();
+            }
+            
+            // Clear any active capacity requests
+            if (window.activeCapacityRequests) {
+                window.activeCapacityRequests.clear();
+            }
+            
+            window.addCapacityEventListeners();
+            
+            // Force immediate capacity check if both location and quantity are already filled
+            const locationInput = document.getElementById('crud_lokasi_rak');
+            const quantityInput = document.getElementById('crud_jumlah_barang');
+            if (locationInput && quantityInput && locationInput.value && quantityInput.value) {
+                // Force immediate check without debounce and without cache
+                setTimeout(() => {
+                    console.log('Force checking capacity on modal open');
+                    window.updateCapacityDisplay(locationInput, quantityInput);
+                }, 200);
+            }
+        }, 100);
+    }
 
     // Auto-fill form values for edit mode
     if (mode === 'edit' && itemData) {
@@ -1702,6 +1922,12 @@ window.handleItemCrudSubmit = async function(event, itemType, mode) {
     const submitBtn = document.getElementById('itemCrudSubmitBtn');
     const originalBtnHtml = submitBtn.innerHTML;
 
+    // Check if capacity is exceeded for incoming items
+    if (itemType === 'incoming' && submitBtn.getAttribute('data-capacity-exceeded') === 'true') {
+        window.showAlert('error', 'Tidak dapat menyimpan! Kapasitas gudang akan terlampaui. Silakan kurangi jumlah barang atau pilih lokasi lain.');
+        return;
+    }
+
     let url = '';
     let method = 'POST'; // Default for Laravel with _method spoofing
 
@@ -1715,14 +1941,21 @@ window.handleItemCrudSubmit = async function(event, itemType, mode) {
     } else { // itemType === 'outgoing'
         // Validate stock for outgoing items before sending
         if (mode === 'add') {
-            const selectedItemName = document.getElementById('crud_nama_barang').value;
-            const requestedQuantity = parseInt(document.getElementById('crud_jumlah_barang').value);
-            const selectedOption = document.querySelector(`#crud_nama_barang option[value="${selectedItemName}"]`);
-            const availableStock = parseInt(selectedOption ? selectedOption.dataset.available : '0');
+            const namaBarangSelect = document.getElementById('crud_nama_barang');
+            const jumlahBarangInput = document.getElementById('crud_jumlah_barang');
+            
+            if (namaBarangSelect && jumlahBarangInput) {
+                const selectedItemName = namaBarangSelect.value;
+                const requestedQuantity = parseInt(jumlahBarangInput.value) || 0;
+                const selectedOption = namaBarangSelect.querySelector(`option[value="${selectedItemName}"]`);
+                const availableStock = parseInt(selectedOption ? selectedOption.dataset.available : '0') || 0;
 
-            if (requestedQuantity > availableStock) {
-                window.showAlert('error', `Jumlah yang diminta (${requestedQuantity}) melebihi stok yang tersedia (${availableStock}).`);
-                return;
+                if (requestedQuantity > availableStock) {
+                    window.showAlert('error', `Jumlah yang diminta (${requestedQuantity}) melebihi stok yang tersedia (${availableStock}).`);
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = originalBtnHtml;
+                    return;
+                }
             }
             url = '{{ route("staff.outgoing_items.store") }}';
         } else { // mode === 'edit'
@@ -1736,12 +1969,14 @@ window.handleItemCrudSubmit = async function(event, itemType, mode) {
     submitBtn.innerHTML = '<div class="loading-spinner"></div> Processing...';
 
     try {
-        // Get category name from category_id
-        const categorySelect = document.getElementById('crud_kategori_barang');
-        if (categorySelect) {
-            const selectedOption = categorySelect.options[categorySelect.selectedIndex];
-            if (selectedOption) {
-                formData.append('kategori_barang', selectedOption.text);
+        // Get category name from category_id for incoming items
+        if (itemType === 'incoming') {
+            const categorySelect = document.getElementById('crud_kategori_barang');
+            if (categorySelect && categorySelect.selectedIndex >= 0) {
+                const selectedOption = categorySelect.options[categorySelect.selectedIndex];
+                if (selectedOption && selectedOption.text) {
+                    formData.append('kategori_barang', selectedOption.text);
+                }
             }
         }
 
@@ -1749,7 +1984,7 @@ window.handleItemCrudSubmit = async function(event, itemType, mode) {
         const fileInputs = ['pembayaran_transaksi', 'nota_transaksi', 'foto_barang'];
         fileInputs.forEach(fieldName => {
             const fileInput = document.querySelector(`input[name="${fieldName}"]`);
-            if (fileInput && fileInput.files.length === 0) {
+            if (fileInput && fileInput.files && fileInput.files.length === 0) {
                 formData.delete(fieldName); // Remove empty file fields
             }
         });
@@ -1796,6 +2031,12 @@ window.handleItemCrudSubmit = async function(event, itemType, mode) {
 
         if (data.success) {
             window.showAlert('success', data.message);
+            
+            // Clear capacity cache to ensure fresh data on next form open
+            if (window.capacityCache) {
+                window.capacityCache.clear();
+            }
+            
             const itemCrudModalElement = document.getElementById('itemCrudModal');
             if (itemCrudModalElement) {
                 const itemCrudModal = bootstrap.Modal.getInstance(itemCrudModalElement);
@@ -1951,7 +2192,7 @@ window.updateOutgoingFormFields = function(selectElement) {
     const currentFotoDiv = document.getElementById('current_foto_barang_outgoing');
     if (currentFotoDiv) {
         if (foto) {
-            currentFotoDiv.innerHTML = `<img src="{{ asset('storage') }}/${foto}" alt="Current Photo" style="width: 100px; height: auto; border-radius: 5px;">`;
+            currentFotoDiv.innerHTML = `<img src="${STORAGE_URL}/${foto}" alt="Current Photo" style="width: 100px; height: auto; border-radius: 5px;">`;
         } else {
             currentFotoDiv.innerHTML = '';
         }
@@ -1962,8 +2203,8 @@ window.updateOutgoingFormFields = function(selectElement) {
     if (currentPembayaranDiv) {
         if (pembayaran) {
             currentPembayaranDiv.innerHTML = window.isPdf(pembayaran) 
-                ? `<a href="{{ asset('storage') }}/${pembayaran}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` 
-                : `<img src="{{ asset('storage') }}/${pembayaran}" alt="Current Payment" style="width: 100px; height: auto; border-radius: 5px;">`;
+                ? `<a href="${STORAGE_URL}/${pembayaran}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` 
+                : `<img src="${STORAGE_URL}/${pembayaran}" alt="Current Payment" style="width: 100px; height: auto; border-radius: 5px;">`;
         } else {
             currentPembayaranDiv.innerHTML = '';
         }
@@ -1974,8 +2215,8 @@ window.updateOutgoingFormFields = function(selectElement) {
     if (currentNotaDiv) {
         if (nota) {
             currentNotaDiv.innerHTML = window.isPdf(nota) 
-                ? `<a href="{{ asset('storage') }}/${nota}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` 
-                : `<img src="{{ asset('storage') }}/${nota}" alt="Current Nota" style="width: 100px; height: auto; border-radius: 5px;">`;
+                ? `<a href="${STORAGE_URL}/${nota}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-file-pdf"></i> Lihat PDF</a>` 
+                : `<img src="${STORAGE_URL}/${nota}" alt="Current Nota" style="width: 100px; height: auto; border-radius: 5px;">`;
         } else {
             currentNotaDiv.innerHTML = '';
         }
@@ -1991,7 +2232,18 @@ window.showRackSelector = function(targetInputId, itemId = null) {
     window.currentTargetInput = targetInputId;
     window.currentItemIdForRack = itemId; // Store current item ID if moving an existing item
     window.generateWarehouseSelector();
-    const modal = new bootstrap.Modal(document.getElementById('rackSelectorModal'));
+    
+    const modalElement = document.getElementById('rackSelectorModal');
+    if (!modalElement) {
+        console.error('rackSelectorModal element not found');
+        window.showAlert('error', 'Modal pemilih rak tidak ditemukan. Silakan refresh halaman.');
+        return;
+    }
+    
+    const modal = new bootstrap.Modal(modalElement, {
+        backdrop: 'static',
+        keyboard: false
+    });
     modal.show();
 }
 
@@ -1999,8 +2251,11 @@ window.showRackSelector = function(targetInputId, itemId = null) {
  * Generates the warehouse grid in the rack selection modal.
  */
 window.generateWarehouseSelector = async function() {
-    const warehouseSelector = document.getElementById('warehouseSelector');
-    if (!warehouseSelector) return;
+    const warehouseSelector = document.getElementById('warehouseGrid');
+    if (!warehouseSelector) {
+        console.error('warehouseGrid element not found');
+        return;
+    }
     
     window.showAlert('info', 'Memuat data lokasi gudang...');
 
@@ -2008,24 +2263,11 @@ window.generateWarehouseSelector = async function() {
         const response = await fetch('{{ route("staff.locations.available") }}', {
             headers: { 'Accept': 'application/json' }
         });
-        // Enhanced error handling for fetch responses
+        
         if (!response.ok) {
-            let errorText = `HTTP error! status: ${response.status}`;
-            try {
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    const errorData = await response.json();
-                    errorText = errorData.message || JSON.stringify(errorData);
-                } else {
-                    errorText = await response.text();
-                }
-            }
-            catch (parseError) {
-                console.error('Error parsing response for non-OK status:', parseError);
-                errorText += ` (Failed to parse response: ${parseError.message})`;
-            }
-            console.error('Server response for generateWarehouseSelector was not OK:', errorText);
-            window.showAlert('error', `Gagal memuat data lokasi gudang. Status: ${response.status}. Detail di konsol.`);
+            // Fallback to manual grid if API fails
+            console.warn('API not available, generating manual grid');
+            window.generateManualWarehouseGrid();
             return;
         }
 
@@ -2046,19 +2288,19 @@ window.generateWarehouseSelector = async function() {
                     for (let col = 1; col <= 6; col++) {
                         const position = `R${rak}-${row}-${col}`;
                         const locationData = allLocations.find(loc => loc.location === position);
-                        const isOccupied = locationData ? !locationData.available : true; // If not found, assume occupied or invalid
+                        const isOccupied = locationData ? !locationData.available : true;
                         const currentItemLocation = document.getElementById(window.currentTargetInput)?.value;
                         const isCurrentItemLocation = currentItemLocation === position;
 
                         let cellClass = 'rack-selector-cell';
-                        let cellContent = position.split('-').slice(1).join('-'); // Default content
+                        let cellContent = position.split('-').slice(1).join('-');
 
                         if (isOccupied && !isCurrentItemLocation) {
                             cellClass += ' occupied';
-                            cellContent = '<i class="fas fa-times"></i>'; // Mark as occupied
+                            cellContent = '<i class="fas fa-times"></i>';
                         } else if (isCurrentItemLocation) {
-                            cellClass += ' selected'; // Highlight current item's location
-                            cellContent = '<i class="fas fa-check"></i>'; // Mark as current
+                            cellClass += ' selected';
+                            cellContent = '<i class="fas fa-check"></i>';
                         }
                         
                         html += `
@@ -2077,11 +2319,58 @@ window.generateWarehouseSelector = async function() {
             window.showAlert('success', 'Data lokasi gudang berhasil dimuat.');
         } else {
             window.showAlert('error', result.message || 'Gagal memuat data lokasi gudang.');
+            window.generateManualWarehouseGrid();
         }
     } catch (error) {
         console.error('Error fetching available locations:', error);
-        window.showAlert('error', 'Kesalahan jaringan saat memuat lokasi gudang.');
+        window.showAlert('warning', 'Menggunakan grid manual karena kesalahan jaringan.');
+        window.generateManualWarehouseGrid();
     }
+}
+
+/**
+ * Generate manual warehouse grid as fallback
+ */
+window.generateManualWarehouseGrid = function() {
+    const warehouseSelector = document.getElementById('warehouseGrid');
+    if (!warehouseSelector) return;
+    
+    let html = '';
+    for (let rak = 1; rak <= 8; rak++) {
+        html += `
+            <div class="warehouse-rack-selector">
+                <div class="rack-selector-header">Rak ${rak}</div>
+                <div class="rack-selector-grid">
+        `;
+        
+        for (let row = 1; row <= 4; row++) {
+            html += '<div class="rack-selector-row">';
+            for (let col = 1; col <= 6; col++) {
+                const position = `R${rak}-${row}-${col}`;
+                const currentItemLocation = document.getElementById(window.currentTargetInput)?.value;
+                const isCurrentItemLocation = currentItemLocation === position;
+
+                let cellClass = 'rack-selector-cell';
+                let cellContent = position.split('-').slice(1).join('-');
+
+                if (isCurrentItemLocation) {
+                    cellClass += ' selected';
+                    cellContent = '<i class="fas fa-check"></i>';
+                }
+                
+                html += `
+                    <div class="${cellClass}" data-position="${position}" 
+                         onclick="window.selectRackPosition('${position}', false)">
+                        ${cellContent}
+                    </div>
+                `;
+            }
+            html += '</div>';
+        }
+        
+        html += '</div></div>';
+    }
+    warehouseSelector.innerHTML = html;
 }
 
 /**
@@ -2787,12 +3076,360 @@ window.generateQR = function(itemId) {
     }, 1500);
 }
 
+// Global variable to store incoming items data
+let incomingItemsData = [];
+
 /**
- * Placeholder for "Ajukan Pergantian Barang" action.
+ * Function untuk refresh CSRF token
+ */
+window.refreshCSRFToken = function() {
+    return fetch('/staff/item-management', {
+        method: 'GET',
+        headers: {
+            'Accept': 'text/html',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.text())
+    .then(html => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const newToken = doc.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        
+        if (newToken) {
+            const tokenMeta = document.querySelector('meta[name="csrf-token"]');
+            if (tokenMeta) {
+                tokenMeta.setAttribute('content', newToken);
+            }
+            return newToken;
+        }
+        throw new Error('Could not refresh CSRF token');
+    })
+    .catch(error => {
+        console.error('Error refreshing CSRF token:', error);
+        return null;
+    });
+};
+
+/**
+ * Function untuk membuka modal ajukan pergantian barang
  */
 window.ajukanPergantianBarang = function() {
-    window.showAlert('info', 'Fitur "Permintaan Penggantian Barang" segera hadir!');
-    // Implement logic for "Ajukan Pergantian Barang" here
+    // Reset form
+    document.getElementById('pergantianBarangForm').reset();
+    
+    // Hide preview
+    const preview = document.getElementById('pergantian_foto_preview');
+    if (preview) {
+        preview.style.display = 'none';
+    }
+    
+    // Clear stok info
+    document.getElementById('pergantian_stok_info').textContent = '';
+    
+    // Refresh CSRF token proactively
+    refreshCSRFToken().then(() => {
+        // Load incoming items data
+        loadIncomingItems();
+    });
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('ajukanPergantianModal'));
+    modal.show();
+};
+
+/**
+ * Function untuk load daftar incoming items
+ */
+window.loadIncomingItems = function(search = '') {
+    fetch(`/staff/incoming-items-list?search=${encodeURIComponent(search)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                incomingItemsData = data.data;
+                populateItemSelect(data.data);
+            } else {
+                console.error('Error loading incoming items:', data.message);
+                window.showAlert('error', 'Gagal memuat daftar barang');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            window.showAlert('error', 'Terjadi kesalahan saat memuat daftar barang');
+        });
+};
+
+/**
+ * Function untuk populate select option dengan data barang
+ */
+window.populateItemSelect = function(items) {
+    const selectElement = document.getElementById('pergantian_select_barang');
+    
+    // Clear existing options except the first one
+    selectElement.innerHTML = '<option value="">-- Pilih barang dari daftar --</option>';
+    
+    items.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.id;
+        option.textContent = item.display_name;
+        option.dataset.item = JSON.stringify(item);
+        selectElement.appendChild(option);
+    });
+};
+
+/**
+ * Function untuk search incoming items
+ */
+window.searchIncomingItems = function() {
+    const search = document.getElementById('pergantian_search_barang').value;
+    loadIncomingItems(search);
+};
+
+/**
+ * Function untuk autofill form berdasarkan barang yang dipilih
+ */
+window.fillFormFromSelectedItem = function() {
+    const selectElement = document.getElementById('pergantian_select_barang');
+    const selectedOption = selectElement.options[selectElement.selectedIndex];
+    
+    if (selectedOption.value && selectedOption.dataset.item) {
+        const item = JSON.parse(selectedOption.dataset.item);
+        
+        // Fill form fields
+        document.getElementById('pergantian_incoming_item_id').value = item.id;
+        document.getElementById('pergantian_nama_barang').value = item.nama_barang;
+        document.getElementById('pergantian_kategori_barang').value = item.kategori_barang;
+        document.getElementById('pergantian_nama_produsen').value = item.nama_produsen || '';
+        document.getElementById('pergantian_lokasi_rak').value = item.lokasi_rak_barang || '';
+        
+        // Set max jumlah barang berdasarkan stok
+        const jumlahInput = document.getElementById('pergantian_jumlah_barang');
+        jumlahInput.max = item.jumlah_barang;
+        jumlahInput.value = 1; // Default value
+        
+        // Update stok info
+        document.getElementById('pergantian_stok_info').textContent = 
+            `Stok tersedia: ${item.jumlah_barang} unit`;
+        
+        // Make fields readonly to prevent manual editing
+        document.getElementById('pergantian_nama_barang').readOnly = true;
+        document.getElementById('pergantian_kategori_barang').readOnly = true;
+        document.getElementById('pergantian_nama_produsen').readOnly = true;
+        
+        // Show selected item photo if available
+        if (item.foto_url) {
+            const previewDiv = document.getElementById('pergantian_foto_preview');
+            const previewImg = document.getElementById('pergantian_foto_img');
+            
+            if (previewDiv && previewImg) {
+                previewImg.src = item.foto_url;
+                previewDiv.style.display = 'block';
+                
+                // Add info that this is current item photo
+                const cardBody = previewDiv.querySelector('.card-body');
+                if (cardBody) {
+                    cardBody.innerHTML = '<small class="text-muted">Foto barang saat ini</small>';
+                }
+            }
+        }
+    }
+};
+
+/**
+ * Function untuk clear selected item dan enable manual input
+ */
+window.clearSelectedItem = function() {
+    // Reset select
+    document.getElementById('pergantian_select_barang').value = '';
+    document.getElementById('pergantian_search_barang').value = '';
+    
+    // Clear form fields
+    document.getElementById('pergantian_incoming_item_id').value = '';
+    document.getElementById('pergantian_nama_barang').value = '';
+    document.getElementById('pergantian_kategori_barang').value = '';
+    document.getElementById('pergantian_nama_produsen').value = '';
+    document.getElementById('pergantian_lokasi_rak').value = '';
+    document.getElementById('pergantian_jumlah_barang').value = '';
+    
+    // Clear stok info
+    document.getElementById('pergantian_stok_info').textContent = '';
+    
+    // Remove max limit from jumlah input
+    const jumlahInput = document.getElementById('pergantian_jumlah_barang');
+    jumlahInput.removeAttribute('max');
+    
+    // Make fields editable again
+    document.getElementById('pergantian_nama_barang').readOnly = false;
+    document.getElementById('pergantian_kategori_barang').readOnly = false;
+    document.getElementById('pergantian_nama_produsen').readOnly = false;
+    
+    // Hide photo preview
+    const preview = document.getElementById('pergantian_foto_preview');
+    if (preview) {
+        preview.style.display = 'none';
+    }
+    
+    window.showAlert('info', 'Form dikosongkan. Anda bisa mengisi manual.');
+};
+
+/**
+ * Function untuk preview foto bukti
+ */
+window.previewFotoBukti = function(input) {
+    const preview = document.getElementById('pergantian_foto_preview');
+    const previewImg = document.getElementById('pergantian_foto_img');
+    
+    if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        
+        reader.onload = function(e) {
+            previewImg.src = e.target.result;
+            preview.style.display = 'block';
+        };
+        
+        reader.readAsDataURL(input.files[0]);
+    } else {
+        preview.style.display = 'none';
+    }
+};
+
+/**
+ * Function untuk submit pergantian barang
+ */
+window.submitPergantianBarang = function() {
+    const form = document.getElementById('pergantianBarangForm');
+    const formData = new FormData(form);
+    
+    // Validate required fields
+    const namaBarang = document.getElementById('pergantian_nama_barang').value.trim();
+    const kategoriBarang = document.getElementById('pergantian_kategori_barang').value.trim();
+    const jumlahBarang = document.getElementById('pergantian_jumlah_barang').value;
+    const alasanPergantian = document.getElementById('pergantian_alasan').value.trim();
+    
+    if (!namaBarang || !kategoriBarang || !jumlahBarang || !alasanPergantian) {
+        window.showAlert('error', 'Semua field yang bertanda * wajib diisi!');
+        return;
+    }
+    
+    if (parseInt(jumlahBarang) < 1) {
+        window.showAlert('error', 'Jumlah barang harus minimal 1!');
+        return;
+    }
+    
+    // Validate against stock if item is selected from incoming_items
+    const incomingItemId = document.getElementById('pergantian_incoming_item_id').value;
+    if (incomingItemId) {
+        const selectedItem = incomingItemsData.find(item => item.id == incomingItemId);
+        if (selectedItem && parseInt(jumlahBarang) > selectedItem.jumlah_barang) {
+            window.showAlert('error', `Jumlah barang tidak boleh melebihi stok yang tersedia (${selectedItem.jumlah_barang} unit)!`);
+            return;
+        }
+    }
+    
+    // Show loading state
+    const submitBtn = document.querySelector('#ajukanPergantianModal .btn-primary');
+    const originalBtnText = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memproses...';
+    
+    // Get fresh CSRF token
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    if (!csrfToken) {
+        window.showAlert('error', 'CSRF token tidak ditemukan. Silakan refresh halaman.');
+        return;
+    }
+
+    // Submit to Web Route
+    fetch('/staff/pergantian-barang', {
+        method: 'POST',
+        headers: {
+            'X-CSRF-TOKEN': csrfToken,
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) {
+            // If 419 CSRF error, try to get fresh token and retry once
+            if (response.status === 419) {
+                return refreshCSRFToken().then(newToken => {
+                    if (newToken) {
+                        // Retry with fresh token
+                        return fetch('/staff/pergantian-barang', {
+                            method: 'POST',
+                            headers: {
+                                'X-CSRF-TOKEN': newToken,
+                                'Accept': 'application/json',
+                                'X-Requested-With': 'XMLHttpRequest'
+                            },
+                            body: formData
+                        });
+                    } else {
+                        throw new Error('CSRF token mismatch');
+                    }
+                }).then(retryResponse => {
+                    if (!retryResponse.ok) {
+                        return retryResponse.json().then(err => Promise.reject(err));
+                    }
+                    return retryResponse.json();
+                });
+            } else {
+                return response.json().then(err => Promise.reject(err));
+            }
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            window.showAlert('success', data.message || 'Pengajuan pergantian barang berhasil dikirim! Admin akan memproses permintaan Anda.');
+            
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('ajukanPergantianModal'));
+            modal.hide();
+            
+            // Reset form
+            form.reset();
+            document.getElementById('pergantian_foto_preview').style.display = 'none';
+            
+        } else {
+            throw new Error(data.message || 'Gagal mengirim pengajuan pergantian barang');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        
+        let errorMessage = 'Terjadi kesalahan saat mengirim pengajuan pergantian barang';
+        
+        // Handle CSRF token mismatch
+        if (error.message && error.message.includes('CSRF token mismatch')) {
+            errorMessage = 'Session telah berakhir. Silakan refresh halaman dan coba lagi.';
+            window.showAlert('warning', errorMessage);
+            
+            // Optionally reload page after delay
+            setTimeout(() => {
+                if (confirm('Refresh halaman sekarang?')) {
+                    location.reload();
+                }
+            }, 2000);
+            return;
+        }
+        
+        if (error.errors) {
+            // Handle validation errors
+            const errorList = Object.values(error.errors).flat();
+            errorMessage = errorList.join(', ');
+        } else if (error.message) {
+            errorMessage = error.message;
+        }
+        
+        window.showAlert('error', errorMessage);
+    })
+    .finally(() => {
+        // Restore button state
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnText;
+    });
 };
 
 // --- NEW VERIFICATION LOGIC ---
@@ -2961,6 +3598,11 @@ function submitIncomingItemForm(formData) {
             // Show success message
             window.showAlert('success', data.message);
             
+            // Clear capacity cache to ensure fresh data
+            if (window.capacityCache) {
+                window.capacityCache.clear();
+            }
+            
             // Reset form
             document.getElementById('incomingItemForm').reset();
             
@@ -3015,5 +3657,353 @@ function clearFormErrors() {
         feedback.remove();
     });
 }
+
+// Cache untuk menyimpan hasil pengecekan kapasitas
+window.capacityCache = new Map();
+
+// Debug mode - set to true to disable all caching
+window.capacityDebugMode = true;
+
+/**
+ * Check warehouse capacity for a location
+ */
+window.checkWarehouseCapacity = async function(locationName, quantity, forceRefresh = false) {
+    if (!locationName || !quantity) return null;
+    
+    // Create cache key
+    const cacheKey = `${locationName}-${quantity}`;
+    const now = Date.now();
+    
+    console.log('Checking capacity for:', locationName, quantity, 'forceRefresh:', forceRefresh);
+    
+    // Check cache (skip if forceRefresh is true or debug mode is on)
+    if (!forceRefresh && !window.capacityDebugMode && window.capacityCache.has(cacheKey)) {
+        const cached = window.capacityCache.get(cacheKey);
+        if (now - cached.timestamp < 5000) { // 5 seconds - much shorter cache
+            console.log('Using cached data for:', cacheKey, cached.data);
+            return cached.data;
+        } else {
+            console.log('Cache expired for:', cacheKey);
+            window.capacityCache.delete(cacheKey);
+        }
+    } else if (forceRefresh || window.capacityDebugMode) {
+        console.log('Force refresh or debug mode - skipping cache for:', cacheKey);
+        window.capacityCache.delete(cacheKey);
+    }
+    
+    // Prevent multiple simultaneous requests for the same data
+    if (window.activeCapacityRequests && window.activeCapacityRequests.has(cacheKey)) {
+        return window.activeCapacityRequests.get(cacheKey);
+    }
+    
+    if (!window.activeCapacityRequests) {
+        window.activeCapacityRequests = new Map();
+    }
+    
+    // Create the request promise
+    const requestPromise = fetch(`/staff/warehouse-capacity-check`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+        },
+        body: JSON.stringify({
+            location_name: locationName,
+            quantity: parseInt(quantity)
+        })
+    })
+    .then(response => response.json())
+    .then(result => {
+        console.log('API Response:', result); // Debug log
+        
+        // Cache the result (unless in debug mode)
+        if (!window.capacityDebugMode) {
+            window.capacityCache.set(cacheKey, {
+                data: result,
+                timestamp: now
+            });
+        }
+        
+        // Clean up active request
+        window.activeCapacityRequests.delete(cacheKey);
+        
+        return result;
+    })
+    .catch(error => {
+        console.error('Error checking capacity:', error);
+        window.activeCapacityRequests.delete(cacheKey);
+        return null;
+    });
+    
+    // Store the active request
+    window.activeCapacityRequests.set(cacheKey, requestPromise);
+    
+    return requestPromise;
+}
+
+/**
+ * Update capacity display for location input
+ */
+window.updateCapacityDisplay = async function(locationInput, quantityInput) {
+    const locationName = locationInput.value.trim();
+    const quantity = parseInt(quantityInput.value) || 0;
+    
+    // Remove existing capacity info
+    const existingInfo = locationInput.parentElement.querySelector('.capacity-info');
+    if (existingInfo) {
+        existingInfo.remove();
+    }
+    
+    // Only check if we have both location and quantity
+    if (!locationName || quantity <= 0) {
+        // Reset submit button to normal state when no capacity check needed
+        const submitBtn = document.getElementById('itemCrudSubmitBtn');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('btn-secondary');
+            submitBtn.classList.add('btn-primary');
+            submitBtn.innerHTML = '<i class="fas fa-save"></i> Simpan';
+            submitBtn.removeAttribute('data-capacity-exceeded');
+        }
+        return;
+    }
+    
+    // Show loading indicator
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'capacity-info mt-2';
+    loadingDiv.innerHTML = '<small class="text-muted"><i class="fas fa-spinner fa-spin"></i> Memeriksa kapasitas...</small>';
+    locationInput.parentElement.appendChild(loadingDiv);
+    
+    try {
+        // Force refresh for real-time updates (no cache)
+        const capacityResult = await window.checkWarehouseCapacity(locationName, quantity, true);
+        
+        // Remove loading indicator
+        loadingDiv.remove();
+        
+        if (capacityResult && capacityResult.capacity_info) {
+            console.log('Capacity Result:', capacityResult); // Debug log
+            
+            const { 
+                max_capacity, 
+                current_capacity, 
+                available_capacity, 
+                projected_capacity,
+                projected_percentage,
+                will_exceed,
+                can_accommodate
+            } = capacityResult.capacity_info;
+            
+            console.log('Capacity data:', {
+                max_capacity,
+                current_capacity,
+                available_capacity,
+                projected_capacity,
+                projected_percentage
+            }); // Debug log
+            
+            const currentPercentage = max_capacity > 0 ? ((current_capacity / max_capacity) * 100).toFixed(1) : '0.0';
+            
+            let statusClass = 'text-success';
+            let statusIcon = 'fa-check-circle';
+            
+            // Determine status based on projected capacity
+            if (will_exceed || !can_accommodate) {
+                statusClass = 'text-danger';
+                statusIcon = 'fa-times-circle';
+            } else if (projected_percentage >= 90) {
+                statusClass = 'text-warning';
+                statusIcon = 'fa-exclamation-triangle';
+            } else if (projected_percentage >= 70) {
+                statusClass = 'text-warning';
+                statusIcon = 'fa-exclamation-circle';
+            } else {
+                // Hijau untuk kondisi normal (di bawah 70%)
+                statusClass = 'text-success';
+                statusIcon = 'fa-check-circle';
+            }
+            
+            const capacityDiv = document.createElement('div');
+            capacityDiv.className = 'capacity-info mt-2 p-2 rounded border';
+            
+            // Add background color based on status
+            if (statusClass === 'text-success') {
+                capacityDiv.classList.add('bg-light', 'border-success');
+            } else if (statusClass === 'text-warning') {
+                capacityDiv.classList.add('bg-warning', 'bg-opacity-10', 'border-warning');
+            } else if (statusClass === 'text-danger') {
+                capacityDiv.classList.add('bg-danger', 'bg-opacity-10', 'border-danger');
+            }
+            
+            // Show the final state after adding items (current + new items)
+            let warningText = '';
+            let successText = '';
+            
+            // If adding items will exceed capacity, show warning
+            if (will_exceed && quantity > 0) {
+                warningText = '<br><span class="text-danger"><strong>⚠️ Menambah ' + quantity + ' unit akan melebihi kapasitas!</strong></span>';
+            } else if (quantity > 0 && projected_percentage < 70) {
+                successText = '<br><span class="text-success"><strong>✅ Kapasitas aman untuk penambahan ' + quantity + ' unit</strong></span>';
+            } else if (quantity > 0 && projected_percentage >= 70 && projected_percentage < 90) {
+                successText = '<br><span class="text-warning"><strong>⚠️ Kapasitas akan mencapai ' + projected_percentage + '% setelah penambahan</strong></span>';
+            }
+            
+            // Always show the projected state when adding items, otherwise show current state
+            let displayCapacity = current_capacity;
+            let displayPercentage = currentPercentage;
+            
+            if (quantity > 0) {
+                displayCapacity = projected_capacity;
+                displayPercentage = projected_percentage;
+            }
+            
+            capacityDiv.innerHTML = `
+                <small class="${statusClass}">
+                    <i class="fas ${statusIcon}"></i>
+                    <strong>Kapasitas saat ini: ${displayCapacity}/${max_capacity} unit (${displayPercentage}%)</strong>
+                    <br>Tersisa: ${Math.max(0, max_capacity - displayCapacity)} unit
+                    ${successText}
+                    ${warningText}
+                </small>
+            `;
+            
+            locationInput.parentElement.appendChild(capacityDiv);
+            
+            // Disable/enable submit button based on capacity
+            const submitBtn = document.getElementById('itemCrudSubmitBtn');
+            if (submitBtn) {
+                if (will_exceed || !can_accommodate) {
+                    submitBtn.disabled = true;
+                    submitBtn.classList.add('btn-secondary');
+                    submitBtn.classList.remove('btn-primary');
+                    submitBtn.innerHTML = '<i class="fas fa-ban"></i> Kapasitas Terlampaui';
+                    
+                    // Add data attribute to track capacity status
+                    submitBtn.setAttribute('data-capacity-exceeded', 'true');
+                } else {
+                    submitBtn.disabled = false;
+                    submitBtn.classList.remove('btn-secondary');
+                    submitBtn.classList.add('btn-primary');
+                    submitBtn.innerHTML = '<i class="fas fa-save"></i> Simpan';
+                    
+                    // Remove capacity exceeded flag
+                    submitBtn.removeAttribute('data-capacity-exceeded');
+                }
+            }
+        }
+    } catch (error) {
+        // Remove loading indicator on error
+        loadingDiv.remove();
+        console.error('Error checking capacity:', error);
+        
+        // Show error message without alert
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'capacity-info mt-2';
+        errorDiv.innerHTML = '<small class="text-muted"><i class="fas fa-exclamation-circle"></i> Tidak dapat memeriksa kapasitas</small>';
+        locationInput.parentElement.appendChild(errorDiv);
+    }
+}
+
+/**
+ * Add event listeners for capacity checking
+ */
+window.addCapacityEventListeners = function() {
+    const locationInput = document.getElementById('crud_lokasi_rak');
+    const quantityInput = document.getElementById('crud_jumlah_barang');
+    
+    if (locationInput && quantityInput) {
+        // Remove existing event listeners to prevent duplicates
+        locationInput.removeEventListener('input', window.capacityCheckHandler);
+        locationInput.removeEventListener('change', window.capacityCheckHandler);
+        quantityInput.removeEventListener('input', window.capacityCheckHandler);
+        quantityInput.removeEventListener('change', window.capacityCheckHandler);
+        
+        // Create a single debounced handler to prevent multiple calls
+        window.capacityCheckHandler = window.debounce(() => {
+            window.updateCapacityDisplay(locationInput, quantityInput);
+        }, 300); // Wait 300ms after user stops typing - faster response
+        
+        // Add new event listeners
+        locationInput.addEventListener('input', window.capacityCheckHandler);
+        locationInput.addEventListener('change', window.capacityCheckHandler);
+        quantityInput.addEventListener('input', window.capacityCheckHandler);
+        quantityInput.addEventListener('change', window.capacityCheckHandler);
+    }
+}
+
+/**
+ * Debounce function to limit how often a function can be called
+ */
+window.debounce = function(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+/**
+ * Toggles the visibility of photo options based on selected radio button
+ */
+window.toggleFotoOptions = function() {
+    const fotoTidakPerlu = document.getElementById('foto_tidak_perlu');
+    const fotoExisting = document.getElementById('foto_existing');
+    const fotoUpload = document.getElementById('foto_upload');
+    
+    const existingSection = document.getElementById('existing_foto_section');
+    const uploadSection = document.getElementById('upload_foto_section');
+    
+    if (fotoTidakPerlu && fotoTidakPerlu.checked) {
+        // Hide both sections
+        if (existingSection) existingSection.style.display = 'none';
+        if (uploadSection) uploadSection.style.display = 'none';
+    } else if (fotoExisting && fotoExisting.checked) {
+        // Show existing photo section, hide upload section
+        if (existingSection) existingSection.style.display = 'block';
+        if (uploadSection) uploadSection.style.display = 'none';
+    } else if (fotoUpload && fotoUpload.checked) {
+        // Show upload section, hide existing photo section
+        if (existingSection) existingSection.style.display = 'none';
+        if (uploadSection) uploadSection.style.display = 'block';
+    }
+}
+
+// Initialize page functionality when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize all page functionality
+    window.initializePage();
+    
+    // Add event listener for existing photo dropdown to show preview
+    const existingFotoSelect = document.getElementById('crud_foto_barang_existing');
+    if (existingFotoSelect) {
+        existingFotoSelect.addEventListener('change', function() {
+            const previewDiv = document.getElementById('existing_foto_preview');
+            const previewImg = document.getElementById('existing_foto_img');
+            
+            if (this.value && previewDiv && previewImg) {
+                const selectedOption = this.options[this.selectedIndex];
+                const previewUrl = selectedOption.getAttribute('data-preview');
+                
+                if (previewUrl) {
+                    previewImg.src = previewUrl;
+                    previewDiv.style.display = 'block';
+                } else {
+                    previewDiv.style.display = 'none';
+                }
+            } else if (previewDiv) {
+                previewDiv.style.display = 'none';
+            }
+        });
+    }
+});
+
+// Initialize page when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    window.initializePage();
+});
 </script>
 @endpush

@@ -16,16 +16,41 @@ class EmployeeAccountController extends Controller
      */
     public function showEmployeeAccounts()
     {
-        // Mengambil semua user dengan role 'admin' atau 'manager' dari database
-        // Anda mungkin ingin memfilter ini agar tidak menampilkan akun manajer lain jika hanya admin yang boleh mengelola admin.
-        $employeeAccounts = User::whereIn('role', ['admin', 'manager'])->get();
+        // Mengambil semua user dengan role 'admin', 'manager', atau 'sales' dari database
+        $employeeAccounts = User::whereIn('role', ['admin', 'manager', 'sales'])->get();
 
         // Daftar peran yang tersedia untuk dipilih saat menambah/mengedit
-        $roles = ['admin', 'manager']; 
+        $roles = ['admin', 'manager', 'sales']; 
 
         return view('dashboard.employee_accounts', [
             'employeeAccounts' => $employeeAccounts,
             'roles' => $roles,
+        ]);
+    }
+
+    /**
+     * Menampilkan halaman pengelolaan user pengecer.
+     */
+    public function showPengecerUsers()
+    {
+        // Mengambil semua user dengan role 'pengecer' dari database
+        $pengecerUsers = User::where('role', 'pengecer')->get();
+
+        return view('dashboard.pengecer_users', [
+            'pengecerUsers' => $pengecerUsers,
+        ]);
+    }
+
+    /**
+     * Menampilkan halaman users pengecer untuk admin staff.
+     */
+    public function showPengecerUsersForAdmin()
+    {
+        // Mengambil semua user dengan role 'pengecer' dari database
+        $pengecerUsers = User::where('role', 'pengecer')->get();
+
+        return view('staff_admin.users', [
+            'pengecerUsers' => $pengecerUsers,
         ]);
     }
 
@@ -41,7 +66,7 @@ class EmployeeAccountController extends Controller
             'username' => 'required|string|max:255|unique:users',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed', // 'confirmed' akan mencari password_confirmation
-            'role' => 'required|in:admin,manager', // Hanya izinkan role 'admin' atau 'manager'
+            'role' => 'required|in:admin,manager,sales', // Tambahkan 'sales' sebagai role yang valid
             'phone_number' => 'nullable|string|max:20',
         ], [
             'full_name.required' => 'Nama Lengkap wajib diisi.',
@@ -120,7 +145,7 @@ class EmployeeAccountController extends Controller
             'username' => ['required', 'string', 'max:255', Rule::unique('users')->ignore($user->id)],
             'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
             'password' => 'nullable|string|min:8|confirmed', // Password opsional saat update
-            'role' => 'required|in:admin,manager',
+            'role' => 'required|in:admin,manager,sales',
             'phone_number' => 'nullable|string|max:20',
         ], [
             'full_name.required' => 'Nama Lengkap wajib diisi.',

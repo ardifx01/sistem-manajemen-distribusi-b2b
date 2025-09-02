@@ -10,8 +10,10 @@ use Illuminate\Support\Facades\Storage;
 use App\Models\IncomingItem;
 use App\Models\OutgoingItem;
 use App\Models\VerificationItem;
+use App\Models\ReturnedItem;
 use App\Models\Producer;
 use App\Models\Category;
+use App\Models\WarehouseLocation;
 use Carbon\Carbon;
 use League\Csv\Reader;
 
@@ -26,7 +28,7 @@ class ItemManagementController extends Controller
         $incomingItems = IncomingItem::with(['producer', 'category'])
             ->orderBy('tanggal_masuk_barang', 'desc')
             ->get();
-        $outgoingItems = OutgoingItem::with(['producer', 'category'])
+        $outgoingItems = OutgoingItem::with(['producer', 'category', 'order'])
             ->orderBy('tanggal_keluar_barang', 'desc')
             ->get();
         $producers = Producer::orderBy('nama_produsen_supplier')->get();
@@ -49,7 +51,7 @@ class ItemManagementController extends Controller
         $incomingItems = IncomingItem::with(['producer', 'category'])
             ->orderBy('tanggal_masuk_barang', 'desc')
             ->get();
-        $outgoingItems = OutgoingItem::with(['producer', 'category'])
+        $outgoingItems = OutgoingItem::with(['producer', 'category', 'order'])
             ->orderBy('tanggal_keluar_barang', 'desc')
             ->get();
         $producers = Producer::orderBy('nama_produsen_supplier')->get();
@@ -82,6 +84,8 @@ class ItemManagementController extends Controller
             'pembayaran_transaksi' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg,pdf|max:2048',
             'nota_transaksi' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg,pdf|max:2048',
             'foto_barang' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'foto_option' => 'required|in:tidak_perlu,existing,upload',
+            'foto_barang_existing' => 'nullable|string',
         ], [
             'nama_barang.required' => 'Nama barang wajib diisi.',
             'category_id.required' => 'Kategori barang wajib dipilih.',
@@ -101,6 +105,8 @@ class ItemManagementController extends Controller
             'foto_barang.image' => 'File foto barang harus berupa gambar.',
             'foto_barang.mimes' => 'File foto barang harus berformat: jpeg, png, jpg, gif, atau svg.',
             'foto_barang.max' => 'Ukuran file foto barang maksimal 2MB.',
+            'foto_option.required' => 'Opsi foto barang wajib dipilih.',
+            'foto_option.in' => 'Opsi foto barang tidak valid.',
         ]);
 
         if ($validator->fails()) {
@@ -110,6 +116,41 @@ class ItemManagementController extends Controller
                 'message' => 'Validasi gagal.',
                 'errors' => $validator->errors()
             ], 422);
+        }
+
+        // Capacity validation for warehouse location
+        if ($request->lokasi_rak_barang) {
+            $location = WarehouseLocation::where('location_name', $request->lokasi_rak_barang)->first();
+            if (!$location) {
+                // Create new location with default capacity
+                $location = WarehouseLocation::create([
+                    'location_name' => $request->lokasi_rak_barang,
+                    'max_capacity' => 300,
+                    'current_capacity' => 0
+                ]);
+            }
+
+            // Check if adding this quantity would exceed capacity
+            if (!$location->canAccommodate($request->jumlah_barang)) {
+                \Log::warning('storeIncomingItem: Capacity exceeded', [
+                    'location' => $request->lokasi_rak_barang,
+                    'current_capacity' => $location->current_capacity,
+                    'max_capacity' => $location->max_capacity,
+                    'requested_quantity' => $request->jumlah_barang,
+                    'available_capacity' => $location->getAvailableCapacity()
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => "Kapasitas rak tidak mencukupi. Lokasi {$request->lokasi_rak_barang} memiliki kapasitas maksimal {$location->max_capacity} unit. Saat ini terisi {$location->current_capacity} unit. Tersisa {$location->getAvailableCapacity()} unit, tetapi Anda mencoba menambah {$request->jumlah_barang} unit.",
+                    'capacity_info' => [
+                        'max_capacity' => $location->max_capacity,
+                        'current_capacity' => $location->current_capacity,
+                        'available_capacity' => $location->getAvailableCapacity(),
+                        'requested_quantity' => $request->jumlah_barang
+                    ]
+                ], 422);
+            }
         }
 
         try {
@@ -128,37 +169,48 @@ class ItemManagementController extends Controller
                 \Log::info('storeIncomingItem: Nota Transaksi uploaded', ['path' => $notaTransaksiPath]);
             }
 
-            if ($request->hasFile('foto_barang')) {
+            // Handle photo based on selected option
+            if ($request->foto_option === 'upload' && $request->hasFile('foto_barang')) {
                 $fotoPath = $request->file('foto_barang')->store('items', 'public');
                 \Log::info('storeIncomingItem: Foto Barang uploaded', ['path' => $fotoPath]);
+            } elseif ($request->foto_option === 'existing' && $request->foto_barang_existing) {
+                $fotoPath = $request->foto_barang_existing;
+                \Log::info('storeIncomingItem: Using existing photo', ['path' => $fotoPath]);
+            } else {
+                // foto_option is 'tidak_perlu' or no valid photo provided
+                $fotoPath = null;
+                \Log::info('storeIncomingItem: No photo selected');
             }
 
             // Get kategori name for storage
             $kategori = Category::find($request->category_id);
             $kategoriName = $kategori ? $kategori->nama_kategori : 'Lainnya';
 
-            // Create incoming item with harga_jual
-            $incomingItem = IncomingItem::create([
+            // Create verification item first (barang masuk ke tabel verifikasi dulu)
+            $verificationItem = VerificationItem::create([
                 'nama_barang' => $request->nama_barang,
                 'kategori_barang' => $kategoriName,
                 'category_id' => $request->category_id,
                 'producer_id' => $request->producer_id,
                 'jumlah_barang' => $request->jumlah_barang,
-                'harga_jual' => $request->harga_jual, // Tambahkan harga_jual
+                'harga_jual' => $request->harga_jual,
                 'tanggal_masuk_barang' => $request->tanggal_masuk_barang,
                 'lokasi_rak_barang' => $request->lokasi_rak_barang,
                 'metode_bayar' => $request->metode_bayar,
                 'pembayaran_transaksi' => $pembayaranTransaksiPath,
                 'nota_transaksi' => $notaTransaksiPath,
                 'foto_barang' => $fotoPath,
+                'status' => 'pending', // Status pending menunggu verifikasi
+                'verified_at' => null,
+                'verified_by' => null,
             ]);
 
-            \Log::info('storeIncomingItem: Item created successfully', ['item_id' => $incomingItem->id, 'data' => $incomingItem->toArray()]);
+            \Log::info('storeIncomingItem: Item added to verification table', ['verification_id' => $verificationItem->id, 'data' => $verificationItem->toArray()]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Barang masuk berhasil ditambahkan.',
-                'data' => $incomingItem
+                'message' => 'Barang masuk berhasil ditambahkan ke daftar verifikasi. Menunggu verifikasi dari admin.',
+                'data' => $verificationItem
             ]);
 
         } catch (\Exception $e) {
@@ -772,16 +824,149 @@ class ItemManagementController extends Controller
         });
         \Log::info('showWarehouseMonitor: Aggregated items by location', ['aggregated_count' => $aggregatedItems->count()]);
 
+        // Sync warehouse locations and get capacity information
+        $this->syncWarehouseLocations();
+        $warehouseLocations = WarehouseLocation::all()->keyBy('location_name');
+
+        // Add capacity information to aggregated items
+        $aggregatedItemsWithCapacity = $aggregatedItems->map(function ($item, $locationName) use ($warehouseLocations) {
+            $location = $warehouseLocations->get($locationName);
+            if ($location) {
+                $item['max_capacity'] = $location->max_capacity;
+                $item['current_capacity'] = $location->current_capacity;
+                $item['available_capacity'] = $location->getAvailableCapacity();
+                $item['capacity_percentage'] = $location->getCapacityPercentage();
+            } else {
+                // Default values if location not found in warehouse_locations table
+                $item['max_capacity'] = 300;
+                $item['current_capacity'] = $item['jumlah_barang'];
+                $item['available_capacity'] = 300 - $item['jumlah_barang'];
+                $item['capacity_percentage'] = round(($item['jumlah_barang'] / 300) * 100, 2);
+            }
+            return $item;
+        });
 
         // Mendapatkan jumlah total rak yang terisi untuk statistik
         $occupiedRacksCount = $incomingItems->unique('lokasi_rak_barang')->count();
         \Log::info('showWarehouseMonitor: Occupied racks count', ['count' => $occupiedRacksCount]);
 
-
         return view('staff_admin.warehouse_monitor', [
-            'aggregatedItems' => $aggregatedItems, // Meneruskan data teragregasi
+            'aggregatedItems' => $aggregatedItemsWithCapacity, // Meneruskan data teragregasi dengan info kapasitas
             'occupiedRacksCount' => $occupiedRacksCount, // Meneruskan jumlah untuk statistik
+            'maxCapacityPerLocation' => 300, // Maximum capacity per location
         ]);
+    }
+
+    /**
+     * Sync warehouse locations with current data from incoming items
+     */
+    private function syncWarehouseLocations()
+    {
+        $locations = IncomingItem::whereNotNull('lokasi_rak_barang')
+            ->where('lokasi_rak_barang', '!=', '')
+            ->distinct()
+            ->pluck('lokasi_rak_barang');
+
+        foreach ($locations as $locationName) {
+            $currentCapacity = IncomingItem::where('lokasi_rak_barang', $locationName)
+                ->where('jumlah_barang', '>', 0)
+                ->sum('jumlah_barang');
+
+            WarehouseLocation::updateOrCreate(
+                ['location_name' => $locationName],
+                [
+                    'max_capacity' => 300,
+                    'current_capacity' => $currentCapacity
+                ]
+            );
+        }
+    }
+
+    /**
+     * Check warehouse capacity for a specific location
+     */
+    public function checkWarehouseCapacity(Request $request)
+    {
+        \Log::info('checkWarehouseCapacity: Request received', ['request_data' => $request->all()]);
+
+        $validator = Validator::make($request->all(), [
+            'location_name' => 'required|string',
+            'quantity' => 'required|integer|min:1',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data tidak valid.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $locationName = $request->location_name;
+            $requestedQuantity = $request->quantity;
+
+            // Get or create location
+            $location = WarehouseLocation::where('location_name', $locationName)->first();
+            if (!$location) {
+                // Calculate current capacity for new location
+                $currentCapacity = IncomingItem::where('lokasi_rak_barang', $locationName)
+                    ->where('jumlah_barang', '>', 0)
+                    ->sum('jumlah_barang');
+
+                $location = WarehouseLocation::create([
+                    'location_name' => $locationName,
+                    'max_capacity' => 300,
+                    'current_capacity' => $currentCapacity
+                ]);
+            } else {
+                // Update current capacity from actual data
+                $location->updateCurrentCapacity();
+            }
+
+            // Check if can accommodate the requested quantity
+            $canAccommodate = $location->canAccommodate($requestedQuantity);
+            
+            // Calculate what the capacity would be AFTER adding this quantity
+            $projectedCapacity = $location->current_capacity + $requestedQuantity;
+            $projectedPercentage = ($projectedCapacity / $location->max_capacity) * 100;
+            
+            \Log::info('checkWarehouseCapacity: Capacity calculation', [
+                'location' => $locationName,
+                'current_capacity' => $location->current_capacity,
+                'max_capacity' => $location->max_capacity,
+                'requested_quantity' => $requestedQuantity,
+                'projected_capacity' => $projectedCapacity,
+                'projected_percentage' => $projectedPercentage,
+                'can_accommodate' => $canAccommodate
+            ]);
+
+            return response()->json([
+                'success' => $canAccommodate,
+                'message' => $canAccommodate 
+                    ? 'Kapasitas mencukupi' 
+                    : "Kapasitas tidak mencukupi. Tersisa {$location->getAvailableCapacity()} unit dari maksimal {$location->max_capacity} unit.",
+                'capacity_info' => [
+                    'location_name' => $location->location_name,
+                    'max_capacity' => $location->max_capacity,
+                    'current_capacity' => $location->current_capacity,
+                    'available_capacity' => $location->getAvailableCapacity(),
+                    'requested_quantity' => $requestedQuantity,
+                    'can_accommodate' => $canAccommodate,
+                    'capacity_percentage' => $location->getCapacityPercentage(),
+                    'projected_capacity' => $projectedCapacity,
+                    'projected_percentage' => round($projectedPercentage, 1),
+                    'will_exceed' => $projectedCapacity > $location->max_capacity
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error in checkWarehouseCapacity: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat memeriksa kapasitas: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
 
@@ -905,6 +1090,94 @@ class ItemManagementController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat mengambil statistik: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan data dashboard admin dengan filter tanggal.
+     */
+    public function getAdminDashboardData(Request $request)
+    {
+        \Log::info('getAdminDashboardData: Request received', ['date' => $request->get('date')]);
+        
+        try {
+            $selectedDate = $request->get('date', now()->format('Y-m-d'));
+            
+            // Parse tanggal yang dipilih
+            $date = Carbon::parse($selectedDate);
+            $startOfDay = $date->startOfDay();
+            $endOfDay = $date->copy()->endOfDay();
+            
+            \Log::info('getAdminDashboardData: Date range', [
+                'start' => $startOfDay->format('Y-m-d H:i:s'),
+                'end' => $endOfDay->format('Y-m-d H:i:s')
+            ]);
+
+            // Hitung statistik berdasarkan tanggal yang dipilih
+            $totalIncoming = IncomingItem::whereBetween('tanggal_masuk_barang', [$startOfDay, $endOfDay])->sum('jumlah_barang');
+            $totalOutgoing = OutgoingItem::whereBetween('tanggal_keluar_barang', [$startOfDay, $endOfDay])->sum('jumlah_barang');
+            $salesTransactions = OutgoingItem::whereBetween('tanggal_keluar_barang', [$startOfDay, $endOfDay])->count();
+            $purchaseTransactions = IncomingItem::whereBetween('tanggal_masuk_barang', [$startOfDay, $endOfDay])->count();
+            
+            // Data untuk grafik mingguan (7 hari dari tanggal yang dipilih)
+            $chartData = [];
+            $chartLabels = [];
+            $chartIncomingData = [];
+            $chartOutgoingData = [];
+            
+            for ($i = 6; $i >= 0; $i--) {
+                $chartDate = $date->copy()->subDays($i);
+                $dayStart = $chartDate->copy()->startOfDay();
+                $dayEnd = $chartDate->copy()->endOfDay();
+                
+                $chartLabels[] = $chartDate->isoFormat('dddd'); // Nama hari dalam bahasa Indonesia
+                $chartIncomingData[] = IncomingItem::whereBetween('tanggal_masuk_barang', [$dayStart, $dayEnd])->sum('jumlah_barang');
+                $chartOutgoingData[] = OutgoingItem::whereBetween('tanggal_keluar_barang', [$dayStart, $dayEnd])->sum('jumlah_barang');
+            }
+            
+            // Periode untuk display
+            $startWeek = $date->copy()->subDays(6);
+            $endWeek = $date->copy();
+            $chartPeriod = $startWeek->format('d M Y') . ' - ' . $endWeek->format('d M Y');
+            
+            // Data untuk grafik (7 hari terakhir dari tanggal yang dipilih)
+            $chartData = [];
+            for ($i = 6; $i >= 0; $i--) {
+                $chartDate = $date->copy()->subDays($i);
+                $dayStart = $chartDate->copy()->startOfDay();
+                $dayEnd = $chartDate->copy()->endOfDay();
+                
+                $chartData[] = [
+                    'date' => $chartDate->format('Y-m-d'),
+                    'incoming' => IncomingItem::whereBetween('tanggal_masuk_barang', [$dayStart, $dayEnd])->sum('jumlah_barang'),
+                    'outgoing' => OutgoingItem::whereBetween('tanggal_keluar_barang', [$dayStart, $dayEnd])->sum('jumlah_barang')
+                ];
+            }
+
+            $stats = [
+                'total_incoming_today' => $totalIncoming,
+                'total_outgoing_today' => $totalOutgoing,
+                'sales_transactions_today' => $salesTransactions,
+                'purchase_transactions_today' => $purchaseTransactions,
+                'chart_labels' => $chartLabels,
+                'chart_incoming_data' => $chartIncomingData,
+                'chart_outgoing_data' => $chartOutgoingData,
+                'chart_period' => $chartPeriod,
+            ];
+
+            \Log::info('getAdminDashboardData: Stats calculated', ['stats' => $stats]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $stats
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error in getAdminDashboardData: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data dashboard: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -1751,6 +2024,303 @@ class ItemManagementController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat mengambil data: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mark order as finished packing
+     * For Admin role in Pengelolaan Barang menu
+     */
+    public function markOrderAsFinishedPacking(Request $request, $orderId)
+    {
+        try {
+            // Check if user is admin or staff with item management access
+            $user = Auth::user();
+            if (!in_array($user->role, ['admin', 'Admin'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Admin access required.'
+                ], 403);
+            }
+
+            // Import Order model if not already imported
+            $order = \App\Models\Order::findOrFail($orderId);
+
+            // Validate current order status - allow from pending, confirmed, and processing status
+            if (!in_array($order->order_status, ['pending', 'confirmed', 'processing'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Order tidak dapat ditandai selesai dikemas. Status saat ini: ' . $order->order_status . '. Hanya order dengan status pending, confirmed, atau processing yang dapat diproses.'
+                ], 422);
+            }
+
+            // Update order status based on current status
+            $previousStatus = $order->order_status;
+            if ($order->order_status === 'pending') {
+                // From pending: confirm first then set to processing
+                $order->order_status = 'processing';
+                $statusAction = 'dari pending langsung ke processing (dikonfirmasi dan selesai dikemas)';
+            } elseif ($order->order_status === 'confirmed') {
+                // From confirmed: set to processing
+                $order->order_status = 'processing';
+                $statusAction = 'dari confirmed ke processing (selesai dikemas)';
+            } else {
+                // Status already processing, just add note
+                $statusAction = 'tetap processing (konfirmasi selesai dikemas)';
+            }
+            
+            // Add notes about packing completion
+            $packingNote = '[' . now()->format('Y-m-d H:i:s') . '] Barang sudah selesai dikemas oleh Admin - Status ' . $statusAction;
+            $order->notes = ($order->notes ? $order->notes . '\n' : '') . $packingNote;
+
+            $order->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Order berhasil ditandai sebagai selesai dikemas - Status ' . $statusAction,
+                'data' => [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'previous_status' => $previousStatus,
+                    'current_status' => $order->order_status,
+                    'status_action' => $statusAction,
+                    'updated_at' => $order->updated_at,
+                    'notes' => $order->notes
+                ]
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order tidak ditemukan'
+            ], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error in markOrderAsFinishedPacking: ' . $e->getMessage(), [
+                'order_id' => $orderId,
+                'user_id' => Auth::id(),
+                'exception' => $e,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menandai order selesai dikemas: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get list of incoming items for pergantian barang selection
+     */
+    public function getIncomingItemsList(Request $request)
+    {
+        try {
+            $search = $request->get('search', '');
+            
+            $query = IncomingItem::with(['category', 'producer'])
+                ->select([
+                    'id',
+                    'nama_barang',
+                    'kategori_barang', 
+                    'category_id',
+                    'producer_id',
+                    'jumlah_barang',
+                    'tanggal_masuk_barang',
+                    'lokasi_rak_barang',
+                    'foto_barang'
+                ])
+                ->where('jumlah_barang', '>', 0); // Only items with available stock
+            
+            // Add search functionality
+            if (!empty($search)) {
+                $query->where(function($q) use ($search) {
+                    $q->where('nama_barang', 'LIKE', "%{$search}%")
+                      ->orWhere('kategori_barang', 'LIKE', "%{$search}%");
+                });
+            }
+            
+            $items = $query->orderBy('nama_barang', 'asc')
+                          ->limit(50) // Limit results for performance
+                          ->get();
+            
+            $formattedItems = $items->map(function($item) {
+                return [
+                    'id' => $item->id,
+                    'nama_barang' => $item->nama_barang,
+                    'kategori_barang' => $item->kategori_barang,
+                    'category_id' => $item->category_id,
+                    'producer_id' => $item->producer_id,
+                    'nama_produsen' => $item->producer ? $item->producer->nama_produsen : null,
+                    'jumlah_barang' => $item->jumlah_barang,
+                    'tanggal_masuk_barang' => $item->tanggal_masuk_barang,
+                    'lokasi_rak_barang' => $item->lokasi_rak_barang,
+                    'foto_barang' => $item->foto_barang,
+                    'foto_url' => $item->foto_barang ? url('storage/' . $item->foto_barang) : null,
+                    'display_name' => $item->nama_barang . ' - ' . $item->kategori_barang . ' (Stock: ' . $item->jumlah_barang . ')'
+                ];
+            });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $formattedItems
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error in getIncomingItemsList: ' . $e->getMessage(), [
+                'exception' => $e
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil daftar barang.'
+            ], 500);
+        }
+    }
+
+    /**
+     * Store pergantian barang (direct return without order)
+     */
+    public function storePergantianBarang(Request $request)
+    {
+        try {
+            // Validate the request data for pergantian barang
+            $validator = Validator::make($request->all(), [
+                'nama_barang' => 'required|string|max:255',
+                'kategori_barang' => 'required|string|max:255', 
+                'jumlah_barang' => 'required|integer|min:1|max:99999',
+                'nama_produsen' => 'nullable|string|max:255',
+                'alasan_pengembalian' => 'required|string|max:1000',
+                'incoming_item_id' => 'nullable|integer|exists:incoming_items,id',
+                'foto_bukti' => 'nullable|image|mimes:jpeg,jpg,png|max:2048' // max 2MB
+            ], [
+                'nama_barang.required' => 'Nama barang wajib diisi.',
+                'kategori_barang.required' => 'Kategori barang wajib diisi.',
+                'jumlah_barang.required' => 'Jumlah barang wajib diisi.',
+                'jumlah_barang.min' => 'Jumlah barang minimal 1.',
+                'jumlah_barang.max' => 'Jumlah barang maksimal 99999.',
+                'alasan_pengembalian.required' => 'Alasan pergantian wajib diisi.',
+                'alasan_pengembalian.max' => 'Alasan pergantian maksimal 1000 karakter.',
+                'incoming_item_id.exists' => 'Barang yang dipilih tidak valid.',
+                'foto_bukti.image' => 'File foto bukti harus berupa gambar.',
+                'foto_bukti.mimes' => 'File foto bukti harus berformat: jpeg, jpg, atau png.',
+                'foto_bukti.max' => 'Ukuran file foto bukti maksimal 2MB.'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validasi gagal.',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $fotoPath = null;
+
+            // Handle file upload if foto_bukti is provided
+            if ($request->hasFile('foto_bukti')) {
+                $file = $request->file('foto_bukti');
+                $fileName = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+                
+                // Store file in public/storage/return_items folder
+                $fotoPath = $file->storeAs('return_items', $fileName, 'public');
+                \Log::info('storePergantianBarang: Foto bukti uploaded', ['path' => $fotoPath]);
+            }
+
+            // Validate stock if incoming_item_id is provided
+            if ($request->incoming_item_id) {
+                $incomingItem = IncomingItem::find($request->incoming_item_id);
+                if (!$incomingItem) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Barang yang dipilih tidak ditemukan.'
+                    ], 404);
+                }
+                
+                if ($request->jumlah_barang > $incomingItem->jumlah_barang) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Jumlah barang tidak boleh melebihi stok yang tersedia ({$incomingItem->jumlah_barang} unit)."
+                    ], 400);
+                }
+            }
+
+            // Log data before saving for debugging
+            \Log::info('storePergantianBarang: Data sebelum disimpan', [
+                'request_data' => $request->except(['foto_bukti']),
+                'foto_path' => $fotoPath
+            ]);
+
+            // Prepare data for creation - use NULL for non-order returns (pergantian barang)
+            $createData = [
+                'order_id' => null, // NULL for pergantian barang (not from order)
+                'order_item_id' => null, // NULL for pergantian barang (not from order)
+                'user_id' => Auth::id(), // Current staff user, can be null
+                'nama_barang' => $request->nama_barang,
+                'kategori_barang' => $request->kategori_barang,
+                'jumlah_barang' => (int) $request->jumlah_barang,
+                'nama_produsen' => $request->nama_produsen ?? '',
+                'alasan_pengembalian' => $request->alasan_pengembalian,
+                'foto_bukti' => $fotoPath,
+                'incoming_item_id' => $request->incoming_item_id ? (int) $request->incoming_item_id : null
+            ];
+
+            \Log::info('storePergantianBarang: Final create data', [
+                'create_data' => $createData
+            ]);
+
+            try {
+                // Create using Eloquent model (simpler and handles nullable fields better)
+                $returnedItem = ReturnedItem::create($createData);
+                
+                \Log::info('storePergantianBarang: Item berhasil dibuat', [
+                    'returned_item_id' => $returnedItem->id
+                ]);
+                
+            } catch (\Exception $createException) {
+                \Log::error('storePergantianBarang: Error saat create ReturnedItem', [
+                    'error' => $createException->getMessage(),
+                    'create_data' => $createData,
+                    'trace' => $createException->getTraceAsString()
+                ]);
+                
+                // Check if it's a nullable column issue
+                if (str_contains($createException->getMessage(), 'cannot be null') || 
+                    str_contains($createException->getMessage(), 'NOT NULL')) {
+                    throw new \Exception(
+                        'Tabel returned_items memerlukan kolom order_id, order_item_id, dan user_id menjadi nullable. ' .
+                        'Silakan jalankan migration yang sudah dibuat: php artisan migrate'
+                    );
+                }
+                
+                throw $createException;
+            }
+
+            \Log::info('storePergantianBarang: Pergantian barang berhasil disimpan', [
+                'returned_item_id' => $returnedItem->id,
+                'data' => $returnedItem->toArray()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Pengajuan pergantian barang berhasil dikirim! Admin akan memproses permintaan Anda.',
+                'data' => $returnedItem
+            ]);
+
+        } catch (\Exception $e) {
+            // Clean up uploaded files if there's an error
+            if (isset($fotoPath) && $fotoPath) {
+                Storage::disk('public')->delete($fotoPath);
+            }
+
+            \Log::error('Error in storePergantianBarang: ' . $e->getMessage(), [
+                'request_data' => $request->all(),
+                'exception' => $e
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat menyimpan data pergantian barang: ' . $e->getMessage()
             ], 500);
         }
     }

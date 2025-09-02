@@ -11,10 +11,22 @@ use App\Http\Controllers\Api\ReturnItemApiController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\VoucherController;
 use App\Http\Controllers\Api\ShippingMethodController;
+use App\Http\Controllers\ForgotPasswordController;
+use App\Http\Controllers\Auth\EmailVerificationController;
 
 // Authentication routes (public)
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+
+// Email verification routes (public) with rate limiting
+Route::post('/send-otp', [EmailVerificationController::class, 'sendOTP'])->middleware('throttle:3,1');
+Route::post('/verify-otp', [EmailVerificationController::class, 'verifyOTP'])->middleware('throttle:5,1');
+Route::post('/resend-otp', [EmailVerificationController::class, 'resendOTP'])->middleware('throttle:2,1');
+
+// Password Reset API routes (public) with rate limiting
+Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLinkEmailAPI'])->middleware('throttle:3,1');
+Route::post('/reset-password', [ForgotPasswordController::class, 'resetPasswordAPI'])->middleware('throttle:5,1');
+Route::post('/verify-reset-token', [ForgotPasswordController::class, 'verifyTokenAPI'])->middleware('throttle:10,1');
 
 // Protected routes (requires authentication)
 Route::middleware('auth:sanctum')->group(function () {
@@ -48,6 +60,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('dashboard')->group(function () {
         // GET /api/dashboard/stats - Get dashboard statistics
         Route::get('/stats', [DashboardApiController::class, 'getDashboardStats']);
+        
+        // GET /api/dashboard/low-stock - Get low stock warnings
+        Route::get('/low-stock', [DashboardApiController::class, 'getLowStockWarning']);
+        
+        // GET /api/dashboard/notifications - Get stock notifications for manager
+        Route::get('/notifications', [DashboardApiController::class, 'getStockNotifications']);
         
         // GET /api/dashboard/low-stock - Get low stock warning items
         Route::get('/low-stock', [DashboardApiController::class, 'getLowStockWarning']);
@@ -109,6 +127,21 @@ Route::middleware('auth:sanctum')->group(function () {
         // GET /api/return-items - Get all returned items with filters
         Route::get('/', [ReturnItemApiController::class, 'index']);
         
+        // GET /api/return-items/returnable-items - Get user's returnable order items
+        Route::get('/returnable-items', [ReturnItemApiController::class, 'getReturnableOrderItems']);
+        
+        // POST /api/return-items/pergantian - Create new pergantian barang (direct return)
+        Route::post('/pergantian', [ReturnItemApiController::class, 'storePergantianBarang']);
+        
+        // POST /api/return-items - Create new returned item
+        Route::post('/', [ReturnItemApiController::class, 'store']);
+        
+        // PUT /api/return-items/{id} - Update returned item
+        Route::put('/{id}', [ReturnItemApiController::class, 'update']);
+        
+        // DELETE /api/return-items/{id} - Delete returned item
+        Route::delete('/{id}', [ReturnItemApiController::class, 'destroy']);
+        
         // GET /api/return-items/categories - Get all available categories
         Route::get('/categories', [ReturnItemApiController::class, 'getCategories']);
         
@@ -143,6 +176,24 @@ Route::middleware('auth:sanctum')->group(function () {
             
             // GET /api/orders/user/{userId} - Get orders by user ID (admin only)
             Route::get('/user/{userId}', [OrderController::class, 'getOrdersByUserId']);
+            
+            // PUT /api/orders/{id}/finished-packing - Mark order as finished packing (admin only)
+            Route::put('/{id}/finished-packing', [OrderController::class, 'markAsFinishedPacking']);
+        });
+
+                // Sales routes (for admin and sales role)
+        Route::middleware('auth:sanctum')->group(function () {
+            // GET /api/orders/sales - Get orders ready for shipping (sales access)
+            Route::get('/sales', [OrderController::class, 'salesIndex']);
+            
+            // GET /api/orders/debug - Debug all orders and statuses
+            Route::get('/debug', [OrderController::class, 'debugOrders']);
+            
+            // GET /api/orders/test - Simple test endpoint
+            Route::get('/test', [OrderController::class, 'testOrders']);
+            
+            // PUT /api/orders/{id}/shipping-status - Update shipping status
+            Route::put('/{id}/shipping-status', [OrderController::class, 'updateShippingStatus']);
         });
         
         // GET /api/orders/{id} - Get order detail

@@ -7,9 +7,16 @@ use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\ItemManagementController;
 use App\Http\Controllers\EmployeeAccountController; // Import controller baru
 use App\Http\Controllers\VerificationItemController;
+use App\Http\Controllers\ProducerController;
+use App\Http\Controllers\ForgotPasswordController;
 
 // Route untuk splash screen
 Route::get('/', [SplashController::class, 'index'])->name('splash');
+
+// React app routes - catch all routes for React SPA
+Route::get('/react/{path?}', function () {
+    return view('react');
+})->where('path', '.*')->name('react');
 
 // Route untuk masuk ke aplikasi (redirect ke login jika belum login)
 Route::get('/enter', function () {
@@ -24,10 +31,24 @@ Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
 Route::post('/login', [LoginController::class, 'login']);
 Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
+// Password Reset Routes
+Route::get('/forgot-password', [ForgotPasswordController::class, 'showForgotPasswordForm'])->name('password.request');
+Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLinkEmail'])->name('password.email');
+Route::get('/reset-password/{token}', [ForgotPasswordController::class, 'showResetPasswordForm'])->name('password.reset');
+Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword'])->name('password.update');
+
 // Routes yang memerlukan autentikasi
 Route::middleware(['auth'])->group(function () {
     // Dashboard utama (dinamis berdasarkan role)
     Route::get('/home', [HomeController::class, 'index'])->name('home');
+    
+    // Routes untuk Producer CRUD (accessible by both manager and admin)
+    Route::resource('producers', ProducerController::class)->only(['store', 'update', 'destroy']);
+    
+    // Test route for debugging
+    Route::get('/test-producers', function() {
+        return 'Producer routes are working';
+    });
     
     // Routes untuk Manager (role: manager)
     Route::middleware(['auth', 'role:manager'])->group(function () {
@@ -36,12 +57,22 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/report/stock/print', [HomeController::class, 'printStockReport'])->name('report.stock.print');
         Route::get('/order/items', [HomeController::class, 'showOrderItems'])->name('order.items');
         
+        // Route untuk chart data AJAX
+        Route::get('/chart/data', [HomeController::class, 'getChartData'])->name('chart.data');
+        
+        // Route untuk manager dashboard dengan filter tanggal
+        Route::get('/manager/dashboard/data', [HomeController::class, 'getManagerDashboardData'])->name('manager.dashboard.data');
+        
         // Routes untuk Akun Pegawai (sekarang di EmployeeAccountController)
         Route::get('/employee/accounts', [EmployeeAccountController::class, 'showEmployeeAccounts'])->name('employee.accounts');
         Route::post('/employee/accounts', [EmployeeAccountController::class, 'storeEmployeeAccount'])->name('employee.accounts.store');
         Route::get('/employee/accounts/{user}/edit', [EmployeeAccountController::class, 'edit'])->name('employee.accounts.edit'); // Untuk ambil data edit
         Route::put('/employee/accounts/{user}', [EmployeeAccountController::class, 'update'])->name('employee.accounts.update');
         Route::delete('/employee/accounts/{user}', [EmployeeAccountController::class, 'destroy'])->name('employee.accounts.destroy');
+        
+        // Route untuk User Pengecer
+        Route::get('/pengecer/users', [EmployeeAccountController::class, 'showPengecerUsers'])->name('pengecer.users');
+        
     });
     
     // Routes untuk Staff Admin (role: admin)
@@ -64,6 +95,10 @@ Route::middleware(['auth'])->group(function () {
         Route::delete('/staff/outgoing-items/{id}', [ItemManagementController::class, 'deleteOutgoingItem'])->name('staff.outgoing_items.delete');
         Route::get('/staff/outgoing-items/{id}', [ItemManagementController::class, 'getOutgoingItem'])->name('staff.outgoing_items.show'); // Untuk mendapatkan detail item keluar
 
+        // Route untuk Pergantian Barang
+        Route::get('/staff/incoming-items-list', [ItemManagementController::class, 'getIncomingItemsList'])->name('staff.incoming_items.list');
+        Route::post('/staff/pergantian-barang', [ItemManagementController::class, 'storePergantianBarang'])->name('staff.pergantian_barang.store');
+
         // Rute baru untuk proses verifikasi barang
         Route::get('/staff/verification-items', [VerificationItemController::class, 'index'])->name('staff.verification_items.index');
         Route::post('/staff/verification-items', [VerificationItemController::class, 'store'])->name('staff.verification_items.store');
@@ -73,6 +108,9 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/staff/items/search', [ItemManagementController::class, 'searchItems'])->name('staff.items.search');
         Route::get('/staff/items/category/{category}', [ItemManagementController::class, 'getItemsByCategory'])->name('staff.items.by_category');
         Route::get('/staff/dashboard/stats', [ItemManagementController::class, 'getDashboardStats'])->name('staff.dashboard.stats');
+        
+        // Route untuk admin dashboard dengan filter tanggal
+        Route::get('/admin/dashboard/data', [ItemManagementController::class, 'getAdminDashboardData'])->name('admin.dashboard.data');
         Route::post('/staff/items/auto-assign-locations', [ItemManagementController::class, 'autoAssignLocations'])->name('staff.items.auto_assign_locations');
         Route::post('/staff/items/import-csv', [ItemManagementController::class, 'importFromCSV'])->name('staff.items.import_csv');
         Route::get('/staff/items/export-csv', [ItemManagementController::class, 'exportToCSV'])->name('staff.items.export_csv');
@@ -86,6 +124,15 @@ Route::middleware(['auth'])->group(function () {
         // Rute baru untuk verifikasi barang
         Route::get('/staff/items/pending-verification', [ItemManagementController::class, 'getPendingVerificationItems'])->name('staff.items.pending-verification');
         Route::post('/staff/items/verify', [ItemManagementController::class, 'verify'])->name('staff.items.verify');
+
+        // Route for marking order as finished packing
+        Route::put('/staff/orders/{orderId}/finished-packing', [ItemManagementController::class, 'markOrderAsFinishedPacking'])->name('staff.orders.finished-packing');
+        
+        // Route untuk Admin melihat Users Pengecer
+        Route::get('/staff/users', [EmployeeAccountController::class, 'showPengecerUsersForAdmin'])->name('staff.users');
+
+        // Route untuk warehouse capacity check
+        Route::post('/staff/warehouse-capacity-check', [ItemManagementController::class, 'checkWarehouseCapacity'])->name('staff.warehouse.capacity_check');
 
     });
 

@@ -84,6 +84,24 @@ class HomeController extends Controller
         $purchaseData = $dateRange->merge($incomingData)->values()->all();
         $salesData = $dateRange->merge($outgoingData)->values()->all();
 
+        // Data untuk notifikasi stok rendah (khusus untuk manager)
+        $lowStockNotifications = [];
+        $outOfStockNotifications = [];
+        if ($user->role === 'manager') {
+            // Barang dengan stok kritis (0 unit)
+            $outOfStockItems = IncomingItem::where('jumlah_barang', 0)
+                ->select('nama_barang', 'kategori_barang', 'lokasi_rak_barang')
+                ->get();
+            
+            // Barang dengan stok rendah (1-10 unit)
+            $lowStockItems = IncomingItem::whereBetween('jumlah_barang', [1, 10])
+                ->select('nama_barang', 'kategori_barang', 'jumlah_barang', 'lokasi_rak_barang')
+                ->orderBy('jumlah_barang', 'asc')
+                ->get();
+
+            $lowStockNotifications = $lowStockItems;
+            $outOfStockNotifications = $outOfStockItems;
+        }
 
         if ($user->role === 'manager') {
             return view('dashboard.manager_dashboard', [
@@ -97,13 +115,21 @@ class HomeController extends Controller
                 'purchaseTrendData' => $purchaseData,
                 'salesTrendData' => $salesData,
                 'chartPeriod' => $startDate->format('d M Y') . ' - ' . $endDate->format('d M Y'),
+                'lowStockNotifications' => $lowStockNotifications,
+                'outOfStockNotifications' => $outOfStockNotifications,
             ]);
         } elseif ($user->role === 'admin') {
+            // Hitung total stok dan barang stok rendah untuk admin dashboard
+            $totalStock = IncomingItem::sum('jumlah_barang') - OutgoingItem::sum('jumlah_barang');
+            $lowStockItems = IncomingItem::where('jumlah_barang', '>', 0)->where('jumlah_barang', '<', 10)->count();
+            
             return view('dashboard.staff_admin_dashboard', [
                 'incomingToday' => $incomingToday,
                 'outgoingToday' => $outgoingToday,
                 'salesTransactionsToday' => $salesTransactionsToday,
                 'purchaseTransactionsToday' => $purchaseTransactionsToday,
+                'totalStock' => $totalStock,
+                'lowStockItems' => $lowStockItems,
                 'chartLabels' => $daysOfWeek,
                 'purchaseTrendData' => $purchaseData,
                 'salesTrendData' => $salesData,
@@ -207,6 +233,139 @@ class HomeController extends Controller
             'producers' => $producers,
             'returnedItems' => $returnedItems,
         ]);
+    }
+
+    /**
+     * Get chart data for AJAX requests.
+     */
+    public function getChartData(Request $request)
+    {
+        $startDate = $request->input('start_date', Carbon::now()->startOfWeek());
+        $endDate = $request->input('end_date', Carbon::now()->endOfWeek());
+        
+        // Convert to Carbon instances if they're strings
+        if (is_string($startDate)) {
+            $startDate = Carbon::parse($startDate);
+        }
+        if (is_string($endDate)) {
+            $endDate = Carbon::parse($endDate);
+        }
+        
+        // Generate daily labels for the period
+        $labels = [];
+        $currentDate = $startDate->copy();
+        while ($currentDate <= $endDate) {
+            $labels[] = $currentDate->format('D, d M'); // Format: Sen, 01 Jan
+            $currentDate->addDay();
+        }
+        
+        // Get incoming items data (pembelian)
+        $incomingData = IncomingItem::selectRaw('DATE(created_at) as date, SUM(jumlah_barang) as total')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->groupBy('date')
+            ->pluck('total', 'date')
+            ->toArray();
+            
+        // Get outgoing items data (penjualan)
+        $outgoingData = OutgoingItem::selectRaw('DATE(created_at) as date, SUM(jumlah_barang) as total')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->groupBy('date')
+            ->pluck('total', 'date')
+            ->toArray();
+        
+        // Fill in missing dates with 0
+        $purchaseData = [];
+        $salesData = [];
+        $currentDate = $startDate->copy();
+        
+        while ($currentDate <= $endDate) {
+            $dateKey = $currentDate->format('Y-m-d');
+            $purchaseData[] = $incomingData[$dateKey] ?? 0;
+            $salesData[] = $outgoingData[$dateKey] ?? 0;
+            $currentDate->addDay();
+        }
+        
+        return response()->json([
+            'labels' => $labels,
+            'purchaseData' => $purchaseData,
+            'salesData' => $salesData,
+            'period' => $startDate->format('d M Y') . ' - ' . $endDate->format('d M Y')
+        ]);
+    }
+
+    /**
+     * Mendapatkan data dashboard manager dengan filter tanggal.
+     */
+    public function getManagerDashboardData(Request $request)
+    {
+        \Log::info('getManagerDashboardData: Request received', ['date' => $request->get('date')]);
+        
+        try {
+            $selectedDate = $request->get('date', Carbon::today()->toDateString());
+            $date = Carbon::parse($selectedDate);
+            
+            // Statistik untuk tanggal yang dipilih
+            $stats = [
+                'total_incoming_today' => IncomingItem::whereDate('tanggal_masuk_barang', $date)->sum('jumlah_barang'),
+                'total_outgoing_today' => OutgoingItem::whereDate('tanggal_keluar_barang', $date)->count(),
+                'sales_transactions_today' => OutgoingItem::whereDate('tanggal_keluar_barang', $date)->count(),
+                'purchase_transactions_today' => IncomingItem::whereDate('tanggal_masuk_barang', $date)->count(),
+            ];
+
+            // Data untuk chart mingguan (7 hari dari tanggal yang dipilih)
+            $chartLabels = [];
+            $chartIncomingData = [];
+            $chartOutgoingData = [];
+            
+            for ($i = 6; $i >= 0; $i--) {
+                $chartDate = $date->copy()->subDays($i);
+                
+                $chartLabels[] = $chartDate->isoFormat('dddd'); // Nama hari dalam bahasa Indonesia
+                $chartIncomingData[] = IncomingItem::whereDate('tanggal_masuk_barang', $chartDate)->sum('jumlah_barang');
+                $chartOutgoingData[] = OutgoingItem::whereDate('tanggal_keluar_barang', $chartDate)->sum('jumlah_barang');
+            }
+            
+            // Periode untuk display
+            $startWeek = $date->copy()->subDays(6);
+            $endWeek = $date->copy();
+            $chartPeriod = $startWeek->format('d M Y') . ' - ' . $endWeek->format('d M Y');
+            
+            // Tambahkan data chart ke response
+            $stats['chart_labels'] = $chartLabels;
+            $stats['chart_incoming_data'] = $chartIncomingData;
+            $stats['chart_outgoing_data'] = $chartOutgoingData;
+            $stats['chart_period'] = $chartPeriod;
+            
+            // Data untuk stock chart (top 10 barang stok terendah)
+            $stockItems = IncomingItem::where('jumlah_barang', '>', 0)
+                ->orderBy('jumlah_barang', 'asc')
+                ->take(10)
+                ->get();
+                
+            $stockLabels = [];
+            $stockData = [];
+            foreach ($stockItems as $item) {
+                $stockLabels[] = $item->nama_barang;
+                $stockData[] = $item->jumlah_barang;
+            }
+            
+            $stats['stock_labels'] = $stockLabels;
+            $stats['stock_data'] = $stockData;
+
+            \Log::info('getManagerDashboardData: Stats calculated', ['stats' => $stats]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $stats
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error in getManagerDashboardData: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data dashboard: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
